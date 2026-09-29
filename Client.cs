@@ -235,9 +235,11 @@ namespace Crystal.FFXILobbyServer
 
                     WorldContainer world = Server.GetWorldFromSubContentId(chara.ContentsSubUserId);
                     uint myIp = BitConverter.ToUInt32(((IPEndPoint)ClientSocket.RemoteEndPoint).Address.GetAddressBytes());
+                    // The session names the map server the client is sent to (lobby.cfg's world ip/port), not
+                    // the address Server.cs passes in, which is hardcoded.
                     // No session (deleted, database error): the map server would refuse the character anyway, so
                     // fail here and the lobby sends an error instead.
-                    if (!Database.AddSession(world, contentId, ffxiIdWorld, key, serverAddress, port, myIp))
+                    if (!Database.AddSession(world, contentId, ffxiIdWorld, key, world.ServerIp, world.ServerPort, myIp))
                         return null;
                     return new(world.World.Num, world.ServerIp, world.ServerPort, world.CacheIp, world.CachePort);
                 }
