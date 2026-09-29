@@ -205,7 +205,7 @@ namespace Crystal.FFXILobbyServer
 
             // Create a new character and update the content id
             WorldContainer world = Server.WorldList[charaInfo.WorldNum];
-            uint newSubId = Database.CreateCharacter(world, charaInfo, RequestedNewCharName, startZone);
+            uint newSubId = Database.CreateCharacter(world, charaInfo, RequestedNewCharName, startZone, contentId);
             if (newSubId != 0)
                 return Database.UpdateFFXISubContentId(contentId, newSubId, RequestedNewCharName);
             return false;
@@ -223,9 +223,22 @@ namespace Crystal.FFXILobbyServer
             {
                 if (chara.ContentsId == contentId && (chara.ContentsSubUserId & 0xFFFF) == ffxiIdWorld)
                 {
+                    // One character in the world per PlayOnline member, whichever of the member's content ids it is on
+                    foreach (CharacterPrimitive other in contentIds)
+                    {
+                        if (other.ContentsSubUserId != 0 && Database.IsCharacterOnline(Server.GetWorldFromSubContentId(other.ContentsSubUserId), other.ContentsSubUserId & 0xFFFF))
+                        {
+                            Program.Log.Warn($"{PolProData} - Character {other.ContentsSubUserId & 0xFFFF} is still logged in");
+                            return null;
+                        }
+                    }
+
                     WorldContainer world = Server.GetWorldFromSubContentId(chara.ContentsSubUserId);
                     uint myIp = BitConverter.ToUInt32(((IPEndPoint)ClientSocket.RemoteEndPoint).Address.GetAddressBytes());
-                    Database.AddSession(world, ffxiIdWorld, key, serverAddress, port, myIp);
+                    // No session (deleted, database error): the map server would refuse the character anyway, so
+                    // fail here and the lobby sends an error instead.
+                    if (!Database.AddSession(world, contentId, ffxiIdWorld, key, serverAddress, port, myIp))
+                        return null;
                     return new(world.World.Num, world.ServerIp, world.ServerPort, world.CacheIp, world.CachePort);
                 }
             }

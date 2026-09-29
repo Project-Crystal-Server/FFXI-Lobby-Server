@@ -254,31 +254,49 @@ namespace Crystal.FFXILobbyServer
             return characters;
         }
 
-        public static uint CreateCharacter(WorldContainer world, CharaInfo charaInfo, string name, uint startZone)
+        // ---- LandSandBoat world database ----------------------------------------------------------------
+        // Only LandSandBoat's map and search servers run behind this lobby; its accounts, login and lobby do not.
+        // A character belongs to the PlayOnline content id it was made on: chars.accid and accounts_sessions.accid
+        // hold that content id (the 32 bits the client knows), and the PlayOnline member that owns the content id
+        // is resolved here, never in the world database. The map server needs accid non-zero (0 marks a deleted
+        // character) and unique per session (accounts_sessions has a UNIQUE key on it), which a content id is.
+
+        private const uint MAX_CHARID = 0xFFFF; // the charid is the low 16 bits of the PlayOnline sub id
+
+        public static uint CreateCharacter(WorldContainer world, CharaInfo charaInfo, string name, uint startZone, uint contentId)
         {
             using MySqlConnection conn = new($"Server={world.DbHost}; Port={world.DbPort}; Database={world.DbName}; UID={world.DbUser}; Password={world.DbPass}");
             try
             {
                 conn.Open();
 
-                // Get the next open charid on this server
+                // The next free charid that fits the 16 bits of the sub id; past 0xFFFF, the first gap.
                 uint charId = 0;
-                MySqlCommand getCharIdCmd = new("SELECT max(charid) FROM chars", conn);
-                object result = getCharIdCmd.ExecuteScalar();
-                if (result != null && result != DBNull.Value)
+                MySqlCommand getCharIdCmd = new("SELECT COALESCE(MAX(charid), 0) + 1 FROM chars WHERE charid <= @max", conn);
+                getCharIdCmd.Parameters.AddWithValue("@max", MAX_CHARID);
+                charId = Convert.ToUInt32(getCharIdCmd.ExecuteScalar());
+                if (charId > MAX_CHARID)
                 {
-                    charId = Convert.ToUInt32(result);
-                    charId = (charId + 1) & 0xFFFF;
+                    MySqlCommand gapCmd = new(@"
+                        SELECT MIN(c.charid) + 1 FROM chars c
+                        WHERE c.charid < @max AND NOT EXISTS (SELECT 1 FROM chars n WHERE n.charid = c.charid + 1)
+                    ", conn);
+                    gapCmd.Parameters.AddWithValue("@max", MAX_CHARID);
+                    object gap = gapCmd.ExecuteScalar();
+                    if (gap == null || gap == DBNull.Value)
+                    {
+                        Program.Log.Error($"Content id {contentId} - No free character id below 0x10000");
+                        return 0;
+                    }
+                    charId = Convert.ToUInt32(gap);
                 }
-                else
-                    charId = 1;
 
                 // We have a new subid!
                 uint newSubId = (world.World.Num << 16) | charId;
 
                 // Create character
                 MySqlCommand cmd = new(@"
-                    INSERT INTO chars(charid,charname,pos_zone,nation) VALUES(@charId, @charName, @startZone, @nation);
+                    INSERT INTO chars(charid,accid,charname,pos_zone,nation) VALUES(@charId, @accid, @charName, @startZone, @nation);
                     INSERT INTO char_look(charid,face,race,size) VALUES(@charId, @face, @race, @size);
                     INSERT INTO char_stats(charid,mjob) VALUES(@charId, @job);
                     INSERT INTO char_exp(charid) VALUES(@charId) ON DUPLICATE KEY UPDATE charid = charid;
@@ -294,6 +312,7 @@ namespace Crystal.FFXILobbyServer
                 ", conn);
 
                 cmd.Parameters.AddWithValue("@charId", charId);
+                cmd.Parameters.AddWithValue("@accid", contentId);
                 cmd.Parameters.AddWithValue("@charName", name);
                 cmd.Parameters.AddWithValue("@startZone", startZone);
                 cmd.Parameters.AddWithValue("@nation", charaInfo.TownNum);
@@ -324,8 +343,11 @@ namespace Crystal.FFXILobbyServer
             try
             {
                 conn.Open();
+                // LandSandBoat's deleted character: the row (and every char_* row) stays, accid 0 and original_accid the
+                // content id it belonged to.
                 MySqlCommand cmd = new(@"
-                    DELETE FROM chars WHERE charid = @ffxiWorldId
+                    UPDATE chars SET original_accid = accid, accid = 0 WHERE charid = @ffxiWorldId AND accid <> 0;
+                    DELETE FROM accounts_sessions WHERE charid = @ffxiWorldId;
                 ", conn);
                 cmd.Parameters.AddWithValue("@ffxiWorldId", ffxiWorldId);
 
@@ -372,16 +394,54 @@ namespace Crystal.FFXILobbyServer
             return false;
         }
 
-        public static bool AddSession(WorldContainer world, uint ffxiWorldId, byte[] key, uint serverAddress, uint serverPort, uint clientAddress)
+        // Whether the character is in the world: a session row, once a zone-out the other map server never saw
+        // (client_port 0 for over 2 minutes) has been cleared away.
+        public static bool IsCharacterOnline(WorldContainer world, uint ffxiWorldId)
         {
             using MySqlConnection conn = new($"Server={world.DbHost}; Port={world.DbPort}; Database={world.DbName}; UID={world.DbUser}; Password={world.DbPass}");
             try
             {
                 conn.Open();
                 MySqlCommand cmd = new(@"
-                    INSERT INTO accounts_sessions(charid, session_key, server_addr, server_port, client_addr, version_mismatch)
-                    VALUES(@charid, @session_key, @server_addr, @server_port, @client_addr, @version_mismatch)
+                    DELETE FROM accounts_sessions
+                    WHERE charid = @charId AND client_port = 0 AND last_zoneout_time <= SUBTIME(NOW(), '00:02:00');
+                    SELECT COUNT(*) FROM accounts_sessions WHERE charid = @charId;
                 ", conn);
+                cmd.Parameters.AddWithValue("@charId", ffxiWorldId);
+                return Convert.ToUInt32(cmd.ExecuteScalar()) != 0;
+            }
+            catch (MySqlException e)
+            {
+                Program.Log.Error(e.ToString());
+                return true; // unknown: keep the character out
+            }
+            finally
+            {
+                conn.Dispose();
+            }
+        }
+
+        public static bool AddSession(WorldContainer world, uint contentId, uint ffxiWorldId, byte[] key, uint serverAddress, uint serverPort, uint clientAddress)
+        {
+            using MySqlConnection conn = new($"Server={world.DbHost}; Port={world.DbPort}; Database={world.DbName}; UID={world.DbUser}; Password={world.DbPass}");
+            try
+            {
+                conn.Open();
+
+                MySqlCommand owned = new("SELECT COUNT(*) FROM chars WHERE charid = @charId AND accid = @contentId", conn);
+                owned.Parameters.AddWithValue("@charId", ffxiWorldId);
+                owned.Parameters.AddWithValue("@contentId", contentId);
+                if (Convert.ToUInt32(owned.ExecuteScalar()) == 0)
+                {
+                    Program.Log.Error($"Content id {contentId} - Character {ffxiWorldId} is not on this content id (deleted?)");
+                    return false;
+                }
+
+                MySqlCommand cmd = new(@"
+                    INSERT INTO accounts_sessions(accid, charid, session_key, server_addr, server_port, client_addr, version_mismatch)
+                    VALUES(@accid, @charid, @session_key, @server_addr, @server_port, @client_addr, @version_mismatch)
+                ", conn);
+                cmd.Parameters.AddWithValue("@accid", contentId);
                 cmd.Parameters.AddWithValue("@session_key", key);
                 cmd.Parameters.AddWithValue("@charid", ffxiWorldId);
                 cmd.Parameters.AddWithValue("@server_addr", serverAddress);
