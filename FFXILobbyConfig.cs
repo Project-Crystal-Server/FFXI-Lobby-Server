@@ -97,7 +97,7 @@ namespace Crystal.FFXILobbyServer
                                 srvPort,
                                 cacheIp,
                                 cachePort
-                            ));
+                            ) { SettingsDir = worldNode.Attributes["settingsDir"]?.InnerText ?? "" });
                         }
                     }
                     WorldList = tempWorldList;

@@ -421,7 +421,7 @@ namespace Crystal.FFXILobbyServer
             }
         }
 
-        public static bool AddSession(WorldContainer world, uint contentId, uint ffxiWorldId, byte[] key, uint serverAddress, uint serverPort, uint clientAddress)
+        public static bool AddSession(WorldContainer world, uint contentId, uint ffxiWorldId, byte[] key, uint serverAddress, uint serverPort, uint clientAddress, string clientVersion, uint clientExpansions)
         {
             using MySqlConnection conn = new($"Server={world.DbHost}; Port={world.DbPort}; Database={world.DbName}; UID={world.DbUser}; Password={world.DbPass}");
             try
@@ -438,8 +438,8 @@ namespace Crystal.FFXILobbyServer
                 }
 
                 MySqlCommand cmd = new(@"
-                    INSERT INTO accounts_sessions(accid, charid, session_key, server_addr, server_port, client_addr, version_mismatch)
-                    VALUES(@accid, @charid, @session_key, @server_addr, @server_port, @client_addr, @version_mismatch)
+                    INSERT INTO accounts_sessions(accid, charid, session_key, server_addr, server_port, client_addr, version_mismatch, client_version, client_expansions)
+                    VALUES(@accid, @charid, @session_key, @server_addr, @server_port, @client_addr, @version_mismatch, @client_version, @client_expansions)
                 ", conn);
                 cmd.Parameters.AddWithValue("@accid", contentId);
                 cmd.Parameters.AddWithValue("@session_key", key);
@@ -448,6 +448,10 @@ namespace Crystal.FFXILobbyServer
                 cmd.Parameters.AddWithValue("@server_port", serverPort);
                 cmd.Parameters.AddWithValue("@client_addr", clientAddress);
                 cmd.Parameters.AddWithValue("@version_mismatch", false);
+                // The client build, for a map server that serves several (the version string of the lobby login and
+                // the expansions the client has installed)
+                cmd.Parameters.AddWithValue("@client_version", clientVersion);
+                cmd.Parameters.AddWithValue("@client_expansions", clientExpansions);
 
                 cmd.ExecuteNonQuery();
                 return true;

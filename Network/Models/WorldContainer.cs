@@ -35,6 +35,10 @@ namespace Crystal.FFXILobbyServer.Network.Models
         public readonly uint CacheIp;
         public readonly uint CachePort;
 
+        // The world server's settings folder (LandSandBoat / Phoenix `settings`): the expansions it enables are
+        // the ones the lobby reports (Utils.ServerExpansions). Empty: not configured.
+        public string SettingsDir = "";
+
         public WorldContainer(World world, string host, string port, string name, string usr, string pass, uint srvIp, uint srvPort, uint cacheIp, uint cachePort)
         {
             World = world;

@@ -48,6 +48,8 @@ namespace Crystal.FFXILobbyServer
         private bool IsLoggedIn = false;
 
         private string PolProData = "";
+        private string ClientVersion = "";   // version string of the lobby login (the client's patch.ver)
+        private uint   ClientExpansions = 0; // expansions the client has installed
         private byte[] Password;
         public uint Md5Key;
 
@@ -136,7 +138,20 @@ namespace Crystal.FFXILobbyServer
             Md5Key = BitConverter.ToUInt32(RandomNumberGenerator.GetBytes(4));
 
             key = Md5Key;
-            serverExpCode = 0xFFFF;
+
+            // The expansions the account has: the ones the server enables (the ENABLE_* settings of every world that
+            // names its settings folder in lobby.cfg; the client's own installed set when none does)
+            uint? enabled = null;
+            foreach (var world in Server.WorldList)
+            {
+                uint? w = Utils.ServerExpansions(world.SettingsDir);
+                if (w != null)
+                    enabled = (enabled ?? 0) | w.Value;
+            }
+            serverExpCode = enabled ?? loginPkt.ClientExpCode;
+            ClientVersion    = System.Text.Encoding.ASCII.GetString(loginPkt.VersionCode).Split((char)0)[0];
+            ClientExpansions = loginPkt.ClientExpCode;
+            Program.Log.Info($"Lobby login: server expansions 0x{serverExpCode:X}, client installed 0x{loginPkt.ClientExpCode:X}, version {System.Text.Encoding.ASCII.GetString(loginPkt.VersionCode).TrimEnd('\0')}");
 
             IsLoggedIn = true;
             return true;
@@ -239,7 +254,7 @@ namespace Crystal.FFXILobbyServer
                     // the address Server.cs passes in, which is hardcoded.
                     // No session (deleted, database error): the map server would refuse the character anyway, so
                     // fail here and the lobby sends an error instead.
-                    if (!Database.AddSession(world, contentId, ffxiIdWorld, key, world.ServerIp, world.ServerPort, myIp))
+                    if (!Database.AddSession(world, contentId, ffxiIdWorld, key, world.ServerIp, world.ServerPort, myIp, ClientVersion, ClientExpansions))
                         return null;
                     return new(world.World.Num, world.ServerIp, world.ServerPort, world.CacheIp, world.CachePort);
                 }
