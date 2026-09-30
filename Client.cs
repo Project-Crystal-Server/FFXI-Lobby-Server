@@ -149,7 +149,8 @@ namespace Crystal.FFXILobbyServer
                     enabled = (enabled ?? 0) | w.Value;
             }
             serverExpCode = enabled ?? loginPkt.ClientExpCode;
-            ClientVersion    = System.Text.Encoding.ASCII.GetString(loginPkt.VersionCode).Split((char)0)[0];
+            // "20100904_2" followed by padding and a trailing marker: keep the version itself
+            ClientVersion    = System.Text.RegularExpressions.Regex.Match(System.Text.Encoding.ASCII.GetString(loginPkt.VersionCode), "^[0-9A-Za-z_]*").Value;
             ClientExpansions = loginPkt.ClientExpCode;
             Program.Log.Info($"Lobby login: server expansions 0x{serverExpCode:X}, client installed 0x{loginPkt.ClientExpCode:X}, version {System.Text.Encoding.ASCII.GetString(loginPkt.VersionCode).TrimEnd('\0')}");
 
