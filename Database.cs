@@ -155,25 +155,30 @@ namespace Crystal.FFXILobbyServer
         public static Character[] GetCharacters(List<WorldContainer> worldList, CharacterPrimitive[] contentIdList)
         {
             // Go through each content id. If there is a server id, grab chara data, otherwise set to blank.
-            int indx = 0;
             Character[] characters = new Character[contentIdList.Length];
-            foreach (CharacterPrimitive polChar in contentIdList)
+            for (int indx = 0; indx < contentIdList.Length; indx++)
             {
+                CharacterPrimitive polChar = contentIdList[indx];
+
+                // Empty until a character is found: one per content id, in order, whatever happens to the others
+                characters[indx].FFXiId = (uint)(polChar.ContentsId & 0xFFFFFFFFL);
+                characters[indx].FFXiIdWorld = 0;
+                characters[indx].WorldId = 0;
+                characters[indx].Status = 1;
+                characters[indx].Name = " ";
+
                 // This content id does not have a character
                 if (polChar.ContentsSubUserId == 0)
-                {
-                    characters[indx].FFXiId = (uint)(polChar.ContentsId & 0xFFFFFFFFL);
-                    characters[indx].FFXiIdWorld = 0;
-                    characters[indx].WorldId = 0;
-                    characters[indx].Status = 1;
-                    characters[indx].Name = " ";
-                    indx++;
                     continue;
-                }
 
                 // This content id has a character, grab data. World id is high 32bits of subid.
                 ushort worldNum = (ushort)((polChar.ContentsSubUserId >> 16) & 0xFFFF);
                 WorldContainer world = worldList.Where(container => container.World.Num == worldNum).FirstOrDefault();
+                if (world == null)
+                {
+                    Program.Log.Error($"Content id {polChar.ContentsId}: character {polChar.ContentsSubUserId & 0xFFFF} is on world {worldNum}, which lobby.cfg does not have");
+                    continue;
+                }
                 using MySqlConnection conn = new($"Server={world.DbHost}; Port={world.DbPort}; Database={world.DbName}; UID={world.DbUser}; Password={world.DbPass}");
                 try
                 {
@@ -190,11 +195,13 @@ namespace Crystal.FFXILobbyServer
                     INNER JOIN char_look  USING(charId)
                     INNER JOIN char_jobs  USING(charId)
                     WHERE charId = @charId
-                    LIMIT 16", conn);
+                    LIMIT 1", conn);
                     cmd.Parameters.AddWithValue("@charId", polChar.ContentsSubUserId & 0xFFFF);
 
                     using MySqlDataReader reader = cmd.ExecuteReader();
-                    while (reader.Read())
+                    if (!reader.Read())
+                        Program.Log.Error($"Content id {polChar.ContentsId}: character {polChar.ContentsSubUserId & 0xFFFF} is not in {world.World.Name}'s database");
+                    else
                     {
                         CharaInfo characterInfo = new();
 
@@ -236,8 +243,6 @@ namespace Crystal.FFXILobbyServer
                         characterInfo.WorldNum = (ushort) world.World.Num;
 
                         characters[indx].CharaInfo = characterInfo;
-
-                        indx++;
                     }
                 }
                 catch (MySqlException e)
@@ -262,6 +267,44 @@ namespace Crystal.FFXILobbyServer
         // character) and unique per session (accounts_sessions has a UNIQUE key on it), which a content id is.
 
         private const uint MAX_CHARID = 0xFFFF; // the charid is the low 16 bits of the PlayOnline sub id
+
+        // Lobby error codes the client shows for a name (LandSandBoat login_errors.h)
+        public const uint ERR_NAME_UNAVAILABLE = 313; // "The character name you entered is unavailable."
+        public const uint ERR_NAME_SERVER      = 314; // "Failed to register with the name server."
+
+        // 0 if the name can be given to a character of the world, else the error to show: letters only, 3 to 15 of
+        // them, and no character of the world has it in any case (deleted ones included: LandSandBoat keeps their rows).
+        public static uint CharacterNameError(WorldContainer world, string name)
+        {
+            if (name.Length < 3 || name.Length > 15 || !name.All(char.IsAsciiLetter))
+            {
+                Program.Log.Warn($"Character name <{name}> refused: not 3 to 15 letters");
+                return ERR_NAME_UNAVAILABLE;
+            }
+
+            using MySqlConnection conn = new($"Server={world.DbHost}; Port={world.DbPort}; Database={world.DbName}; UID={world.DbUser}; Password={world.DbPass}");
+            try
+            {
+                conn.Open();
+                MySqlCommand cmd = new("SELECT COUNT(*) FROM chars WHERE LOWER(charname) = LOWER(@name)", conn);
+                cmd.Parameters.AddWithValue("@name", name);
+                if (Convert.ToUInt32(cmd.ExecuteScalar()) != 0)
+                {
+                    Program.Log.Warn($"Character name <{name}> refused: in use on {world.World.Name}");
+                    return ERR_NAME_UNAVAILABLE;
+                }
+                return 0;
+            }
+            catch (MySqlException e)
+            {
+                Program.Log.Error(e.ToString());
+                return ERR_NAME_SERVER;
+            }
+            finally
+            {
+                conn.Dispose();
+            }
+        }
 
         public static uint CreateCharacter(WorldContainer world, CharaInfo charaInfo, string name, uint startZone, uint contentId)
         {
@@ -374,13 +417,18 @@ namespace Crystal.FFXILobbyServer
                 string query = @"
                         UPDATE chars
                         SET charname = @newName, doRename = 0
-                        WHERE charid = @ffxiWorldId
+                        WHERE charid = @ffxiWorldId AND doRename <> 0
                         ";
 
                 MySqlCommand cmd = new(query, conn);
                 cmd.Parameters.AddWithValue("@ffxiWorldId", ffxiWorldId);
                 cmd.Parameters.AddWithValue("@newName", newName);
-                cmd.ExecuteNonQuery();
+                // Only a character flagged for a rename can take a new name
+                if (cmd.ExecuteNonQuery() == 0)
+                {
+                    Program.Log.Warn($"Character {ffxiWorldId} is not flagged for a rename");
+                    return false;
+                }
                 return true;
             }
             catch (MySqlException e)
