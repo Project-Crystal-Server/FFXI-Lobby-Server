@@ -469,7 +469,7 @@ namespace Crystal.FFXILobbyServer
             }
         }
 
-        public static bool AddSession(WorldContainer world, uint contentId, uint ffxiWorldId, byte[] key, uint serverAddress, uint serverPort, uint clientAddress, string clientVersion, uint clientExpansions)
+        public static bool AddSession(WorldContainer world, uint contentId, uint ffxiWorldId, byte[] key, uint serverAddress, uint serverPort, uint clientAddress, string clientVersion, uint clientExpansions, string lobbyToken)
         {
             using MySqlConnection conn = new($"Server={world.DbHost}; Port={world.DbPort}; Database={world.DbName}; UID={world.DbUser}; Password={world.DbPass}");
             try
@@ -486,8 +486,8 @@ namespace Crystal.FFXILobbyServer
                 }
 
                 MySqlCommand cmd = new(@"
-                    INSERT INTO accounts_sessions(accid, charid, session_key, server_addr, server_port, client_addr, version_mismatch, client_version, client_expansions)
-                    VALUES(@accid, @charid, @session_key, @server_addr, @server_port, @client_addr, @version_mismatch, @client_version, @client_expansions)
+                    INSERT INTO accounts_sessions(accid, charid, session_key, server_addr, server_port, client_addr, version_mismatch, client_version, client_expansions, lobby_token)
+                    VALUES(@accid, @charid, @session_key, @server_addr, @server_port, @client_addr, @version_mismatch, @client_version, @client_expansions, @lobby_token)
                 ", conn);
                 cmd.Parameters.AddWithValue("@accid", contentId);
                 cmd.Parameters.AddWithValue("@session_key", key);
@@ -500,6 +500,8 @@ namespace Crystal.FFXILobbyServer
                 // the expansions the client has installed)
                 cmd.Parameters.AddWithValue("@client_version", clientVersion);
                 cmd.Parameters.AddWithValue("@client_expansions", clientExpansions);
+                // What the map server shows the account service to ask about this session's account (AccountService)
+                cmd.Parameters.AddWithValue("@lobby_token", lobbyToken);
 
                 cmd.ExecuteNonQuery();
                 return true;
@@ -513,6 +515,82 @@ namespace Crystal.FFXILobbyServer
                 conn.Dispose();
             }
             return false;
+        }
+
+        // ---- Account service ------------------------------------------------------------------------------------
+
+        // The content id and character of the world's live session with this token, if there is one
+        public static (uint contentId, uint charId)? GetSessionByToken(WorldContainer world, string token)
+        {
+            using MySqlConnection conn = new($"Server={world.DbHost}; Port={world.DbPort}; Database={world.DbName}; UID={world.DbUser}; Password={world.DbPass}");
+            try
+            {
+                conn.Open();
+                MySqlCommand cmd = new("SELECT accid, charid FROM accounts_sessions WHERE lobby_token = @token LIMIT 1", conn);
+                cmd.Parameters.AddWithValue("@token", token);
+                using MySqlDataReader reader = cmd.ExecuteReader();
+                if (reader.Read())
+                    return (reader.GetUInt32("accid"), reader.GetUInt32("charid"));
+            }
+            catch (MySqlException e)
+            {
+                Program.Log.Error(e.ToString());
+            }
+            finally
+            {
+                conn.Dispose();
+            }
+            return null;
+        }
+
+        // The PlayOnline member a content id (the 32 bits the client knows) belongs to, and the sub id of its slot
+        public static (string polId, uint subId)? GetContentIdOwner(uint contentId)
+        {
+            using MySqlConnection conn = new($"Server={POL_DB_HOST}; Port={POL_DB_PORT}; Database={POL_DB_NAME}; UID={POL_DB_USERNAME}; Password={POL_DB_PASSWORD}");
+            try
+            {
+                conn.Open();
+                MySqlCommand cmd = new("SELECT polId, subId FROM characters WHERE (id & 0xFFFFFFFF) = @contentId AND contentClass = 1 LIMIT 1", conn);
+                cmd.Parameters.AddWithValue("@contentId", contentId);
+                using MySqlDataReader reader = cmd.ExecuteReader();
+                if (reader.Read())
+                    return (reader.GetString("polId"), reader.GetUInt32("subId"));
+            }
+            catch (MySqlException e)
+            {
+                Program.Log.Error(e.ToString());
+            }
+            finally
+            {
+                conn.Dispose();
+            }
+            return null;
+        }
+
+        // Every FFXI content id of a PlayOnline member, as the client knows them
+        public static List<uint> GetMemberContentIds(string polId)
+        {
+            List<uint> contentIds = [];
+            using MySqlConnection conn = new($"Server={POL_DB_HOST}; Port={POL_DB_PORT}; Database={POL_DB_NAME}; UID={POL_DB_USERNAME}; Password={POL_DB_PASSWORD}");
+            try
+            {
+                conn.Open();
+                MySqlCommand cmd = new("SELECT id FROM characters WHERE polId = @polId AND contentClass = 1 ORDER BY id", conn);
+                cmd.Parameters.AddWithValue("@polId", polId);
+                using MySqlDataReader reader = cmd.ExecuteReader();
+                while (reader.Read())
+                    contentIds.Add((uint)(reader.GetUInt64("id") & 0xFFFFFFFF));
+            }
+            catch (MySqlException e)
+            {
+                Program.Log.Error(e.ToString());
+                contentIds.Clear();
+            }
+            finally
+            {
+                conn.Dispose();
+            }
+            return contentIds;
         }
     }
 }

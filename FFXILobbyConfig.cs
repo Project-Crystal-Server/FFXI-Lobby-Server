@@ -43,6 +43,9 @@ namespace Crystal.FFXILobbyServer
 
         public readonly List<WorldContainer> WorldList;
 
+        // Where the account service listens (<accounts listen="127.0.0.1:54005"/>); null: not started
+        public readonly string AccountsListen;
+
         public FFXILobbyConfig(string path) 
         {
             Console.ForegroundColor = ConsoleColor.Yellow;
@@ -66,6 +69,10 @@ namespace Crystal.FFXILobbyServer
                     PolDbName = cfgChildNode.Attributes["database"]?.InnerText;
                     PolDbUsername = cfgChildNode.Attributes["username"]?.InnerText;
                     PolDbPassword = cfgChildNode.Attributes["password"]?.InnerText;
+                }
+                if (cfgChildNode.Name.Equals("accounts"))
+                {
+                    AccountsListen = cfgChildNode.Attributes["listen"]?.InnerText;
                 }
                 if (cfgChildNode.Name.Equals("worlds"))
                 {
@@ -97,7 +104,11 @@ namespace Crystal.FFXILobbyServer
                                 srvPort,
                                 cacheIp,
                                 cachePort
-                            ) { SettingsDir = worldNode.Attributes["settingsDir"]?.InnerText ?? "" });
+                            )
+                            {
+                                SettingsDir = worldNode.Attributes["settingsDir"]?.InnerText ?? "",
+                                AccountsKey = worldNode.Attributes["accountsKey"]?.InnerText ?? "",
+                            });
                         }
                     }
                     WorldList = tempWorldList;

@@ -39,6 +39,9 @@ namespace Crystal.FFXILobbyServer.Network.Models
         // the ones the lobby reports (Utils.ServerExpansions). Empty: not configured.
         public string SettingsDir = "";
 
+        // The key this world's map servers show the account service (AccountService). Empty: the world cannot use it.
+        public string AccountsKey = "";
+
         public WorldContainer(World world, string host, string port, string name, string usr, string pass, uint srvIp, uint srvPort, uint cacheIp, uint cachePort)
         {
             World = world;
