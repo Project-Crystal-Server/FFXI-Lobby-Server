@@ -82,11 +82,10 @@ namespace Crystal.FFXILobbyServer
                         {
                             ushort num = ushort.Parse(worldNode.Attributes["id"]?.InnerText);
                             string name = worldNode.Attributes["name"]?.InnerText;
-                            string srvDbHost = worldNode.Attributes["dbHost"]?.InnerText;
-                            string srvDbPort = worldNode.Attributes["dbPort"]?.InnerText;
-                            string srvName = worldNode.Attributes["dbName"]?.InnerText;
-                            string srvUser = worldNode.Attributes["dbUser"]?.InnerText;
-                            string srvPass = worldNode.Attributes["dbPass"]?.InnerText;
+                            string apiUrl = worldNode.Attributes["api"]?.InnerText;
+                            string apiKey = worldNode.Attributes["apiKey"]?.InnerText;
+                            if (string.IsNullOrEmpty(apiUrl) || string.IsNullOrEmpty(apiKey))
+                                throw new FormatException($"world {name} needs api (its HTTP API address) and apiKey (its LOBBY_API_KEY)");
 
                             uint srvIp = BitConverter.ToUInt32(IPAddress.Parse(worldNode.Attributes["ip"]?.InnerText).GetAddressBytes()); 
                             uint srvPort = uint.Parse(worldNode.Attributes["port"]?.InnerText);
@@ -95,18 +94,14 @@ namespace Crystal.FFXILobbyServer
 
                             tempWorldList.Add(new(
                                 new World() { Num = num, Name = name},
-                                srvDbHost,
-                                srvDbPort, 
-                                srvName, 
-                                srvUser, 
-                                srvPass,
+                                apiUrl,
+                                apiKey,
                                 srvIp,
                                 srvPort,
                                 cacheIp,
                                 cachePort
                             )
                             {
-                                SettingsDir = worldNode.Attributes["settingsDir"]?.InnerText ?? "",
                                 AccountsKey = worldNode.Attributes["accountsKey"]?.InnerText ?? "",
                             });
                         }

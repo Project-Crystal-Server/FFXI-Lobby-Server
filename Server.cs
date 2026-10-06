@@ -238,7 +238,7 @@ namespace Crystal.FFXILobbyServer
                             if (conn.VerifyPassword(requestPkt.Password))
                             {
                                 WorldContainer world = GetWorldFromName(requestPkt.WorldName);
-                                uint nameError = world == null ? 0 : Database.CharacterNameError(world, requestPkt.Name);
+                                uint nameError = world == null ? 0 : world.Api.NameError(requestPkt.Name);
                                 if (nameError != 0)
                                     conn.SendError(nameError);
                                 else if (world != null)

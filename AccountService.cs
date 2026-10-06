@@ -166,7 +166,7 @@ namespace Crystal.FFXILobbyServer
             // About which session
             if (!headers.TryGetValue("X-Lobby-Session", out string sessionToken) || !IsToken(sessionToken))
                 return (403, Error("no session"));
-            (uint contentId, uint charId)? session = Database.GetSessionByToken(world, sessionToken);
+            (uint contentId, uint charId)? session = world.Api.SessionByToken(sessionToken);
             if (session == null)
                 return (403, Error("no session"));
 

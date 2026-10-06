@@ -24,32 +24,26 @@ namespace Crystal.FFXILobbyServer.Network.Models
     public class WorldContainer
     {
         public readonly World World;
-        public readonly string DbHost;
-        public readonly string DbPort;
-        public readonly string DbName;
-        public readonly string DbUser;
-        public readonly string DbPass;
+        // The world server's API (its /api/lobby) and the key it takes: the lobby reaches a world only through it
+        public readonly string ApiUrl;
+        public readonly string ApiKey;
 
         public readonly uint ServerIp;
         public readonly uint ServerPort;
         public readonly uint CacheIp;
         public readonly uint CachePort;
 
-        // The world server's settings folder (LandSandBoat / Phoenix `settings`): the expansions it enables are
-        // the ones the lobby reports (Utils.ServerExpansions). Empty: not configured.
-        public string SettingsDir = "";
-
         // The key this world's map servers show the account service (AccountService). Empty: the world cannot use it.
         public string AccountsKey = "";
 
-        public WorldContainer(World world, string host, string port, string name, string usr, string pass, uint srvIp, uint srvPort, uint cacheIp, uint cachePort)
+        public readonly WorldApi Api;
+
+        public WorldContainer(World world, string apiUrl, string apiKey, uint srvIp, uint srvPort, uint cacheIp, uint cachePort)
         {
             World = world;
-            DbHost = host;
-            DbPort = port;
-            DbName = name;
-            DbUser = usr;
-            DbPass = pass;
+            ApiUrl = apiUrl;
+            ApiKey = apiKey;
+            Api = new WorldApi(this);
 
             ServerIp = srvIp;
             ServerPort = srvPort;

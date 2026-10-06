@@ -435,51 +435,5 @@ namespace Crystal.FFXILobbyServer
             return (ushort)(((input << 8) & 0xff00) |
                             ((input >> 8) & 0x00ff));
         }
-
-    
-        // Expansion bits of the lobby login answer (LandSandBoat login_helpers.h EXPANSION_DISPLAY).
-        private static readonly (string Key, uint Bits)[] ExpansionSettings =
-        [
-            ("ENABLE_ROTZ", 0x0002),
-            ("ENABLE_COP", 0x0004),
-            ("ENABLE_TOAU", 0x0008),
-            ("ENABLE_WOTG", 0x0010),
-            ("ENABLE_ACP", 0x0020),
-            ("ENABLE_AMK", 0x0040),
-            ("ENABLE_ASA", 0x0080),
-            ("ENABLE_ABYSSEA", 0x0100 | 0x0200 | 0x0400), // Visions, Scars, Heroes
-            ("ENABLE_SOA", 0x0800),
-        ];
-
-        // The expansions a LandSandBoat / Phoenix world enables: the ENABLE_* switches of its settings/main.lua
-        // (over settings/default/main.lua), as the lobby login's expansion bitmask. Null if unreadable.
-        public static uint? ServerExpansions(string settingsDir)
-        {
-            if (string.IsNullOrEmpty(settingsDir))
-                return null;
-
-            Dictionary<string, string> values = [];
-            foreach (string file in new[] { Path.Combine(settingsDir, "default", "main.lua"), Path.Combine(settingsDir, "main.lua") })
-            {
-                if (!File.Exists(file))
-                    continue;
-                foreach (string line in File.ReadAllLines(file))
-                {
-                    var m = System.Text.RegularExpressions.Regex.Match(line, @"^\s*(ENABLE_[A-Z]+)\s*=\s*([A-Za-z0-9]+)");
-                    if (m.Success)
-                        values[m.Groups[1].Value] = m.Groups[2].Value;
-                }
-            }
-            if (values.Count == 0)
-                return null;
-
-            uint mask = 0x0001; // base game
-            foreach (var (key, bits) in ExpansionSettings)
-            {
-                if (values.TryGetValue(key, out string v) && (v == "1" || v.Equals("true", StringComparison.OrdinalIgnoreCase)))
-                    mask |= bits;
-            }
-            return mask;
-        }
 }
 }
