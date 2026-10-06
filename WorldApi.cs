@@ -195,13 +195,6 @@ namespace Crystal.FFXILobbyServer
                 return (contentId.GetValue<uint>(), charId.GetValue<uint>());
             return null;
         }
-
-        // The expansions the world enables, as the lobby login's expansion bitmask; null if it cannot say
-        public uint? Expansions()
-        {
-            var (status, body) = Send(HttpMethod.Get, "/api/lobby/world");
-            return status == 200 && body["expansions"] is JsonNode e ? e.GetValue<uint>() : null;
-        }
     }
 
     // A character as the world lists it

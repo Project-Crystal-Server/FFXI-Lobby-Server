@@ -87,7 +87,7 @@ namespace Crystal.FFXILobbyServer
             Database.POL_DB_PASSWORD = config.PolDbPassword;
 
             // Setup Server
-            Server server = new Server(config.WorldList);
+            Server server = new Server(config.WorldList) { Expansions = config.Expansions };
             if (!string.IsNullOrEmpty(config.AccountsListen))
             {
                 if (!IPEndPoint.TryParse(config.AccountsListen, out IPEndPoint accountsEndPoint) || accountsEndPoint.Port == 0)

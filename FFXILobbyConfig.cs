@@ -43,6 +43,25 @@ namespace Crystal.FFXILobbyServer
 
         public readonly List<WorldContainer> WorldList;
 
+        // Expansion bits of the lobby login answer (LandSandBoat login_helpers.h EXPANSION_DISPLAY), by the name
+        // <expansions enabled="..."/> uses. The base game is always enabled.
+        private static readonly Dictionary<string, uint> ExpansionBits = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["ROTZ"] = 0x0002,
+            ["COP"] = 0x0004,
+            ["TOAU"] = 0x0008,
+            ["WOTG"] = 0x0010,
+            ["ACP"] = 0x0020,
+            ["AMK"] = 0x0040,
+            ["ASA"] = 0x0080,
+            ["ABYSSEA"] = 0x0100 | 0x0200 | 0x0400, // Visions, Scars, Heroes
+            ["SOA"] = 0x0800,
+        };
+
+        // The expansions the lobby reports as enabled (<expansions enabled="ROTZ,COP,..."/>); null: not set, so the
+        // client's own installed set stands
+        public readonly uint? Expansions;
+
         // Where the account service listens (<accounts listen="127.0.0.1:54005"/>); null: not started
         public readonly string AccountsListen;
 
@@ -69,6 +88,17 @@ namespace Crystal.FFXILobbyServer
                     PolDbName = cfgChildNode.Attributes["database"]?.InnerText;
                     PolDbUsername = cfgChildNode.Attributes["username"]?.InnerText;
                     PolDbPassword = cfgChildNode.Attributes["password"]?.InnerText;
+                }
+                if (cfgChildNode.Name.Equals("expansions") && cfgChildNode.Attributes["enabled"] != null)
+                {
+                    uint mask = 0x0001; // base game
+                    foreach (string name in cfgChildNode.Attributes["enabled"].InnerText.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                    {
+                        if (!ExpansionBits.TryGetValue(name, out uint bits))
+                            throw new FormatException($"<expansions enabled=\"...\"/> names {name}, which is not one of {string.Join(", ", ExpansionBits.Keys)}");
+                        mask |= bits;
+                    }
+                    Expansions = mask;
                 }
                 if (cfgChildNode.Name.Equals("accounts"))
                 {

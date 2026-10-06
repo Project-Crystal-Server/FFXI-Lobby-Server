@@ -146,16 +146,9 @@ namespace Crystal.FFXILobbyServer
 
             key = Md5Key;
 
-            // The expansions the account has: the ones the server enables (what every world that answers says it
-            // enables; the client's own installed set when none does)
-            uint? enabled = null;
-            foreach (var world in Server.WorldList)
-            {
-                uint? w = world.Api.Expansions();
-                if (w != null)
-                    enabled = (enabled ?? 0) | w.Value;
-            }
-            serverExpCode = enabled ?? loginPkt.ClientExpCode;
+            // The expansions the account has: the ones lobby.cfg enables (the client's own installed set when it
+            // does not say)
+            serverExpCode = Server.Expansions ?? loginPkt.ClientExpCode;
             // "20100904_2" followed by padding and a trailing marker: keep the version itself
             ClientVersion    = System.Text.RegularExpressions.Regex.Match(System.Text.Encoding.ASCII.GetString(loginPkt.VersionCode), "^[0-9A-Za-z_]*").Value;
             ClientExpansions = loginPkt.ClientExpCode;
