@@ -40,6 +40,12 @@ namespace Crystal.FFXILobbyServer
 
         public readonly List<WorldContainer> WorldList;
 
+        // Started next to the lobby when lobby.cfg has <accounts listen="..."/>
+        public AccountService Accounts;
+
+        // The expansions lobby.cfg enables, as the lobby login's bitmask; null: whatever the client has installed
+        public uint? Expansions;
+
         private readonly List<Client> ClientList = [];
 
         public Server(List<WorldContainer> worldList)
@@ -53,9 +59,9 @@ namespace Crystal.FFXILobbyServer
             return WorldList.Where(container => container.World.Num == worldNum).FirstOrDefault();
         }
 
-        public World? GetWorldFromName(string name)
+        public WorldContainer GetWorldFromName(string name)
         {
-            return WorldList.Where(container => container.World.Name == name).FirstOrDefault()?.World;
+            return WorldList.Where(container => container.World.Name == name).FirstOrDefault();
         }
 
         #region Socket Handling
@@ -234,8 +240,11 @@ namespace Crystal.FFXILobbyServer
                             CreateCharPrePkt requestPkt = CreateCharPrePkt.Cast(packet.Data);
                             if (conn.VerifyPassword(requestPkt.Password))
                             {
-                                World? world = GetWorldFromName(requestPkt.WorldName);
-                                if (world != null)
+                                WorldContainer world = GetWorldFromName(requestPkt.WorldName);
+                                uint nameError = world == null ? 0 : world.Api.NameError(requestPkt.Name);
+                                if (nameError != 0)
+                                    conn.SendError(nameError);
+                                else if (world != null)
                                 {
                                     conn.SetRequestedCharaName(requestPkt.Name);
                                     conn.Md5Key++;
@@ -253,12 +262,16 @@ namespace Crystal.FFXILobbyServer
                             CreateCharPkt requestPkt = CreateCharPkt.Cast(packet.Data);
                             if (conn.VerifyPassword(requestPkt.Password))
                             {
-                                if (!conn.CreateCharacter(requestPkt.FFXIId, requestPkt.Password, requestPkt.NewCharaInfo))
-                                    conn.SendError(0);
-                                conn.Md5Key++;
-                                conn.SendPacket(OkPkt.OPCODE, new OkPkt().Bytes);
-                                conn.ClearCharacters();
-                                Program.Log.Info($"{conn.GetPolProData()} - Creating a character");
+                                uint error = conn.CreateCharacter(requestPkt.FFXIId, requestPkt.Password, requestPkt.NewCharaInfo);
+                                if (error != 0)
+                                    conn.SendError(error);
+                                else
+                                {
+                                    conn.Md5Key++;
+                                    conn.SendPacket(OkPkt.OPCODE, new OkPkt().Bytes);
+                                    conn.ClearCharacters();
+                                    Program.Log.Info($"{conn.GetPolProData()} - Creating a character");
+                                }
                             }
                             else
                                 conn.SendError(0);
@@ -318,10 +331,16 @@ namespace Crystal.FFXILobbyServer
                             RenameCharPkt requestPkt = RenameCharPkt.Cast(packet.Data);
                             if (conn.VerifyPassword(requestPkt.Password))
                             {
-                                conn.DoRename(requestPkt.FFXIId, requestPkt.FFXIIdWorld, requestPkt.NewName);
-                                conn.Md5Key++;
-                                conn.SendPacket(OkPkt.OPCODE, new OkPkt().Bytes);
-                                Program.Log.Info($"{conn.GetPolProData()} - Renaming a character");
+                                uint error = conn.DoRename(requestPkt.FFXIId, requestPkt.FFXIIdWorld, requestPkt.NewName);
+                                if (error != 0)
+                                    conn.SendError(error);
+                                else
+                                {
+                                    conn.Md5Key++;
+                                    conn.SendPacket(OkPkt.OPCODE, new OkPkt().Bytes);
+                                    conn.ClearCharacters();
+                                    Program.Log.Info($"{conn.GetPolProData()} - Renaming a character");
+                                }
                             }
                             else
                                 conn.SendError(0);

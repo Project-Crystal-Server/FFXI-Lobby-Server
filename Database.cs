@@ -31,6 +31,8 @@ namespace Crystal.FFXILobbyServer
 {
     class Database
     {
+        // The lobby's own database: PlayOnline members and the content ids they hold. A world's characters are
+        // reached through the world's API (WorldApi), never its database.
         public static string POL_DB_HOST = "127.0.0.1";
         public static string POL_DB_PORT = "3306";
         public static string POL_DB_NAME = "playonline";
@@ -152,255 +154,154 @@ namespace Crystal.FFXILobbyServer
             return true;
         }
 
+        // The characters of the content ids, as their worlds list them (World.ListCharacters). The lobby's own
+        // records say which world and character a content id holds (the sub id); the world says what that is.
+        // Null when a world that holds one of them cannot answer.
         public static Character[] GetCharacters(List<WorldContainer> worldList, CharacterPrimitive[] contentIdList)
         {
             // Go through each content id. If there is a server id, grab chara data, otherwise set to blank.
-            int indx = 0;
             Character[] characters = new Character[contentIdList.Length];
-            foreach (CharacterPrimitive polChar in contentIdList)
+            Dictionary<WorldContainer, List<int>> asked = [];
+            for (int indx = 0; indx < contentIdList.Length; indx++)
             {
+                CharacterPrimitive polChar = contentIdList[indx];
+
+                // Empty until a character is found: one per content id, in order, whatever happens to the others
+                characters[indx].FFXiId = (uint)(polChar.ContentsId & 0xFFFFFFFFL);
+                characters[indx].FFXiIdWorld = 0;
+                characters[indx].WorldId = 0;
+                characters[indx].Status = 1;
+                characters[indx].Name = " ";
+
                 // This content id does not have a character
                 if (polChar.ContentsSubUserId == 0)
-                {
-                    characters[indx].FFXiId = (uint)(polChar.ContentsId & 0xFFFFFFFFL);
-                    characters[indx].FFXiIdWorld = 0;
-                    characters[indx].WorldId = 0;
-                    characters[indx].Status = 1;
-                    characters[indx].Name = " ";
-                    indx++;
                     continue;
-                }
 
-                // This content id has a character, grab data. World id is high 32bits of subid.
+                // This content id has a character. World id is high 16 bits of subid.
                 ushort worldNum = (ushort)((polChar.ContentsSubUserId >> 16) & 0xFFFF);
                 WorldContainer world = worldList.Where(container => container.World.Num == worldNum).FirstOrDefault();
-                using MySqlConnection conn = new($"Server={world.DbHost}; Port={world.DbPort}; Database={world.DbName}; UID={world.DbUser}; Password={world.DbPass}");
-                try
+                if (world == null)
                 {
-                    conn.Open();
-                    MySqlCommand cmd = new(
-                        @"
-                    SELECT charid, charname, doRename, pos_zone, pos_prevzone, mjob,
-                    race, face, head, body, hands, legs, feet, main, sub,
-                    war, mnk, whm, blm, rdm, thf, pld, drk, bst, brd, rng,
-                    sam, nin, drg, smn, blu, cor, pup, dnc, sch, geo, run,
-                    gmlevel, nation, size, sjob
-                    FROM chars
-                    INNER JOIN char_stats USING(charId)
-                    INNER JOIN char_look  USING(charId)
-                    INNER JOIN char_jobs  USING(charId)
-                    WHERE charId = @charId
-                    LIMIT 16", conn);
-                    cmd.Parameters.AddWithValue("@charId", polChar.ContentsSubUserId & 0xFFFF);
-
-                    using MySqlDataReader reader = cmd.ExecuteReader();
-                    while (reader.Read())
-                    {
-                        CharaInfo characterInfo = new();
-
-                        characters[indx].FFXiId = (uint) (polChar.ContentsId & 0xFFFFFFFFL); // ContentId is 64bit but FFXI truncates it to 32bit.
-                        characters[indx].FFXiIdWorld = (ushort) (polChar.ContentsSubUserId & 0xFFFF); // This should match, char id + world id. If 0 it's deleted.
-                        characters[indx].WorldId = (ushort) ((polChar.ContentsSubUserId >> 16) & 0xFFFF);
-                        //character.FfxiIdWorldTbl = charIdExtra; //Doesn't exist in 2010
-                        characters[indx].Status = 1;
-                        characters[indx].Rename = (ushort) (reader.GetByte("doRename") == 0 ? 0 : 1);
-                        characters[indx].Name = reader.GetString("charname").PadRight(16, '\0')[..16];
-                        characters[indx].WorldName = world.World.Name;
-
-                        ushort zone = reader.GetUInt16("pos_zone");
-                        byte mainJob = reader.GetByte("mjob");
-                        characterInfo.RaceNum = reader.GetUInt16("race");
-                        characterInfo.MJobNum = reader.GetByte("mjob");
-                        characterInfo.MJobLevel = reader.GetByte(14 + mainJob); // Index-based lookup from C++ logic
-                        characterInfo.SJobNum = reader.GetByte("sjob");
-                        characterInfo.FaceNum = reader.GetUInt16("face");
-                        characterInfo.TownNum = reader.GetByte("nation");
-
-                        characterInfo.ZoneNumLow = (byte)zone;
-                        characterInfo.ZoneNumHigh = (byte)((zone >> 8) & 1);
-
-                        characterInfo.HairNum = reader.GetByte("face");
-                        characterInfo.Size = reader.GetByte("size");
-
-                        characterInfo.FaceModelId = reader.GetUInt16("face");
-                        characterInfo.HeadModelId = reader.GetUInt16("head");
-                        characterInfo.BodyModelId = reader.GetUInt16("body");
-                        characterInfo.HandsModelId = reader.GetUInt16("hands");
-                        characterInfo.LegsModelId = reader.GetUInt16("legs");
-                        characterInfo.FeetModelId = reader.GetUInt16("feet");
-                        characterInfo.MainWeaponModelId = reader.GetUInt16("main");
-                        characterInfo.SubWeaponModelId = reader.GetUInt16("sub");
-
-                        characterInfo.GenFlag = 0;
-                        characterInfo.AnonStatusFlag = 0;
-                        characterInfo.WorldNum = (ushort) world.World.Num;
-
-                        characters[indx].CharaInfo = characterInfo;
-
-                        indx++;
-                    }
+                    Program.Log.Error($"Content id {polChar.ContentsId}: character {polChar.ContentsSubUserId & 0xFFFF} is on world {worldNum}, which lobby.cfg does not have");
+                    continue;
                 }
-                catch (MySqlException e)
-                {
-                    Program.Log.Error(e.ToString());
+                if (!asked.TryGetValue(world, out List<int> indexes))
+                    asked[world] = indexes = [];
+                indexes.Add(indx);
+            }
+
+            foreach (var (world, indexes) in asked)
+            {
+                List<WorldCharacter> found = world.Api.ListCharacters(
+                    [.. indexes.Select(i => ((uint)(contentIdList[i].ContentsId & 0xFFFFFFFFL), contentIdList[i].ContentsSubUserId & 0xFFFF))]);
+                if (found == null)
                     return null;
-                }
-                finally
+
+                for (int n = 0; n < indexes.Count; n++)
                 {
-                    conn.Dispose();
+                    int indx = indexes[n];
+                    CharacterPrimitive polChar = contentIdList[indx];
+                    WorldCharacter c = found[n];
+                    if (c == null)
+                    {
+                        Program.Log.Error($"Content id {polChar.ContentsId}: character {polChar.ContentsSubUserId & 0xFFFF} is not in {world.World.Name}'s characters");
+                        continue;
+                    }
+
+                    CharaInfo characterInfo = new();
+
+                    characters[indx].FFXiId = (uint) (polChar.ContentsId & 0xFFFFFFFFL); // ContentId is 64bit but FFXI truncates it to 32bit.
+                    characters[indx].FFXiIdWorld = (ushort) (polChar.ContentsSubUserId & 0xFFFF); // This should match, char id + world id. If 0 it's deleted.
+                    characters[indx].WorldId = (ushort) ((polChar.ContentsSubUserId >> 16) & 0xFFFF);
+                    //character.FfxiIdWorldTbl = charIdExtra; //Doesn't exist in 2010
+                    characters[indx].Status = 1;
+                    characters[indx].Rename = (ushort) (c.Rename ? 1 : 0);
+                    characters[indx].Name = c.Name.PadRight(16, ' ')[..16];
+                    characters[indx].WorldName = world.World.Name;
+
+                    characterInfo.RaceNum = c.Race;
+                    characterInfo.MJobNum = c.MainJob;
+                    characterInfo.MJobLevel = c.MainJobLevel;
+                    characterInfo.SJobNum = c.SubJob;
+                    characterInfo.FaceNum = c.Face;
+                    characterInfo.TownNum = c.Nation;
+
+                    characterInfo.ZoneNumLow = (byte)c.Zone;
+                    characterInfo.ZoneNumHigh = (byte)((c.Zone >> 8) & 1);
+
+                    characterInfo.HairNum = (byte)c.Face;
+                    characterInfo.Size = c.Size;
+
+                    characterInfo.FaceModelId = c.Face;
+                    characterInfo.HeadModelId = c.Head;
+                    characterInfo.BodyModelId = c.Body;
+                    characterInfo.HandsModelId = c.Hands;
+                    characterInfo.LegsModelId = c.Legs;
+                    characterInfo.FeetModelId = c.Feet;
+                    characterInfo.MainWeaponModelId = c.Main;
+                    characterInfo.SubWeaponModelId = c.Sub;
+
+                    characterInfo.GenFlag = 0;
+                    characterInfo.AnonStatusFlag = 0;
+                    characterInfo.WorldNum = (ushort) world.World.Num;
+
+                    characters[indx].CharaInfo = characterInfo;
                 }
             }
 
             return characters;
         }
 
-        public static uint CreateCharacter(WorldContainer world, CharaInfo charaInfo, string name, uint startZone)
+        // ---- Account service ------------------------------------------------------------------------------------
+
+        // The PlayOnline member a content id (the 32 bits the client knows) belongs to, and the sub id of its slot
+        public static (string polId, uint subId)? GetContentIdOwner(uint contentId)
         {
-            using MySqlConnection conn = new($"Server={world.DbHost}; Port={world.DbPort}; Database={world.DbName}; UID={world.DbUser}; Password={world.DbPass}");
+            using MySqlConnection conn = new($"Server={POL_DB_HOST}; Port={POL_DB_PORT}; Database={POL_DB_NAME}; UID={POL_DB_USERNAME}; Password={POL_DB_PASSWORD}");
             try
             {
                 conn.Open();
-
-                // Get the next open charid on this server
-                uint charId = 0;
-                MySqlCommand getCharIdCmd = new("SELECT max(charid) FROM chars", conn);
-                object result = getCharIdCmd.ExecuteScalar();
-                if (result != null && result != DBNull.Value)
-                {
-                    charId = Convert.ToUInt32(result);
-                    charId = (charId + 1) & 0xFFFF;
-                }
-                else
-                    charId = 1;
-
-                // We have a new subid!
-                uint newSubId = (world.World.Num << 16) | charId;
-
-                // Create character
-                MySqlCommand cmd = new(@"
-                    INSERT INTO chars(charid,charname,pos_zone,nation) VALUES(@charId, @charName, @startZone, @nation);
-                    INSERT INTO char_look(charid,face,race,size) VALUES(@charId, @face, @race, @size);
-                    INSERT INTO char_stats(charid,mjob) VALUES(@charId, @job);
-                    INSERT INTO char_exp(charid) VALUES(@charId) ON DUPLICATE KEY UPDATE charid = charid;
-                    INSERT INTO char_flags(charid) VALUES(@charId) ON DUPLICATE KEY UPDATE disconnecting = disconnecting;
-                    INSERT INTO char_jobs(charid) VALUES(@charId) ON DUPLICATE KEY UPDATE charid = charid;
-                    INSERT INTO char_points(charid) VALUES(@charId) ON DUPLICATE KEY UPDATE charid = charid;
-                    INSERT INTO char_unlocks(charid) VALUES(@charId) ON DUPLICATE KEY UPDATE charid = charid;
-                    INSERT INTO char_profile(charid) VALUES(@charId) ON DUPLICATE KEY UPDATE charid = charid;
-                    INSERT INTO char_storage(charid) VALUES(@charId) ON DUPLICATE KEY UPDATE charid = charid;
-                    DELETE FROM char_inventory WHERE charid = @charId;
-                    INSERT INTO char_inventory(charid) VALUES(@charId);
-                    INSERT INTO char_vars(charid, varname, value) VALUES(@charId, @cutsceneVar, 1);
-                ", conn);
-
-                cmd.Parameters.AddWithValue("@charId", charId);
-                cmd.Parameters.AddWithValue("@charName", name);
-                cmd.Parameters.AddWithValue("@startZone", startZone);
-                cmd.Parameters.AddWithValue("@nation", charaInfo.TownNum);
-                cmd.Parameters.AddWithValue("@face", charaInfo.FaceNum);
-                cmd.Parameters.AddWithValue("@race", charaInfo.RaceNum);
-                cmd.Parameters.AddWithValue("@size", charaInfo.Size);
-                cmd.Parameters.AddWithValue("@job", charaInfo.MJobNum);
-                cmd.Parameters.AddWithValue("@cutsceneVar", "HQuest[newCharacterCS]notSeen");
-
-                cmd.ExecuteNonQuery();
-
-                return newSubId;
+                MySqlCommand cmd = new("SELECT polId, subId FROM characters WHERE (id & 0xFFFFFFFF) = @contentId AND contentClass = 1 LIMIT 1", conn);
+                cmd.Parameters.AddWithValue("@contentId", contentId);
+                using MySqlDataReader reader = cmd.ExecuteReader();
+                if (reader.Read())
+                    return (reader.GetString("polId"), reader.GetUInt32("subId"));
             }
             catch (MySqlException e)
             {
                 Program.Log.Error(e.ToString());
-                return 0;
             }
             finally
             {
                 conn.Dispose();
             }
+            return null;
         }
 
-        public static bool DeleteCharacter(WorldContainer world, uint ffxiWorldId)
+        // Every FFXI content id of a PlayOnline member, as the client knows them
+        public static List<uint> GetMemberContentIds(string polId)
         {
-            using MySqlConnection conn = new($"Server={world.DbHost}; Port={world.DbPort}; Database={world.DbName}; UID={world.DbUser}; Password={world.DbPass}");
+            List<uint> contentIds = [];
+            using MySqlConnection conn = new($"Server={POL_DB_HOST}; Port={POL_DB_PORT}; Database={POL_DB_NAME}; UID={POL_DB_USERNAME}; Password={POL_DB_PASSWORD}");
             try
             {
                 conn.Open();
-                MySqlCommand cmd = new(@"
-                    DELETE FROM chars WHERE charid = @ffxiWorldId
-                ", conn);
-                cmd.Parameters.AddWithValue("@ffxiWorldId", ffxiWorldId);
-
-                cmd.ExecuteNonQuery();
-                return true;
+                MySqlCommand cmd = new("SELECT id FROM characters WHERE polId = @polId AND contentClass = 1 ORDER BY id", conn);
+                cmd.Parameters.AddWithValue("@polId", polId);
+                using MySqlDataReader reader = cmd.ExecuteReader();
+                while (reader.Read())
+                    contentIds.Add((uint)(reader.GetUInt64("id") & 0xFFFFFFFF));
             }
             catch (MySqlException e)
             {
                 Program.Log.Error(e.ToString());
+                contentIds.Clear();
             }
             finally
             {
                 conn.Dispose();
             }
-            return false;
-        }
-
-        public static bool RenameCharacter(WorldContainer world, uint ffxiWorldId, string newName)
-        {
-            using MySqlConnection conn = new($"Server={world.DbHost}; Port={world.DbPort}; Database={world.DbName}; UID={world.DbUser}; Password={world.DbPass}");
-            try
-            {
-                conn.Open();
-                string query = @"
-                        UPDATE chars
-                        SET charname = @newName, doRename = 0
-                        WHERE charid = @ffxiWorldId
-                        ";
-
-                MySqlCommand cmd = new(query, conn);
-                cmd.Parameters.AddWithValue("@ffxiWorldId", ffxiWorldId);
-                cmd.Parameters.AddWithValue("@newName", newName);
-                cmd.ExecuteNonQuery();
-                return true;
-            }
-            catch (MySqlException e)
-            {
-                Program.Log.Error(e.ToString());
-            }
-            finally
-            {
-                conn.Dispose();
-            }
-            return false;
-        }
-
-        public static bool AddSession(WorldContainer world, uint ffxiWorldId, byte[] key, uint serverAddress, uint serverPort, uint clientAddress)
-        {
-            using MySqlConnection conn = new($"Server={world.DbHost}; Port={world.DbPort}; Database={world.DbName}; UID={world.DbUser}; Password={world.DbPass}");
-            try
-            {
-                conn.Open();
-                MySqlCommand cmd = new(@"
-                    INSERT INTO accounts_sessions(charid, session_key, server_addr, server_port, client_addr, version_mismatch)
-                    VALUES(@charid, @session_key, @server_addr, @server_port, @client_addr, @version_mismatch)
-                ", conn);
-                cmd.Parameters.AddWithValue("@session_key", key);
-                cmd.Parameters.AddWithValue("@charid", ffxiWorldId);
-                cmd.Parameters.AddWithValue("@server_addr", serverAddress);
-                cmd.Parameters.AddWithValue("@server_port", serverPort);
-                cmd.Parameters.AddWithValue("@client_addr", clientAddress);
-                cmd.Parameters.AddWithValue("@version_mismatch", false);
-
-                cmd.ExecuteNonQuery();
-                return true;
-            }
-            catch (MySqlException e)
-            {
-                Program.Log.Error(e.ToString());
-            }
-            finally
-            {
-                conn.Dispose();
-            }
-            return false;
+            return contentIds;
         }
     }
 }

@@ -20,6 +20,8 @@ along with Project Crystal Server. If not, see <https://www.gnu.org/licenses/>.
 */
 
 using System;
+using System.Collections.Generic;
+using System.IO;
 using System.Text;
 
 namespace Crystal.FFXILobbyServer
@@ -433,6 +435,5 @@ namespace Crystal.FFXILobbyServer
             return (ushort)(((input << 8) & 0xff00) |
                             ((input >> 8) & 0x00ff));
         }
-
-    }
+}
 }
