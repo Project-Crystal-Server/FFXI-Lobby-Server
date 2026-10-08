@@ -124,7 +124,9 @@ namespace Crystal.FFXILobbyServer
                 ["contentId"] = contentId,
                 ["name"] = name,
                 ["race"] = info.RaceNum,
-                ["face"] = info.FaceNum,
+                // The face is the low byte of FaceModelId (0-15, 8B = 15): the same byte LandSandBoat's own login server
+                // takes from the create packet (offset 60). FaceNum is only the face number (8A and 8B are both 7).
+                ["face"] = info.FaceModelId & 0xFF,
                 ["size"] = info.Size,
                 ["job"] = info.MJobNum,
                 ["nation"] = info.TownNum,
