@@ -112,6 +112,9 @@ namespace Crystal.FFXILobbyServer
                         {
                             ushort num = ushort.Parse(worldNode.Attributes["id"]?.InnerText);
                             string name = worldNode.Attributes["name"]?.InnerText;
+                            // The client's world list holds 16 bytes for a name, the last of them its end
+                            if (name?.Length > 15)
+                                throw new FormatException($"world name \"{name}\" is longer than 15 characters");
                             string apiUrl = worldNode.Attributes["api"]?.InnerText;
                             string apiKey = worldNode.Attributes["apiKey"]?.InnerText;
                             if (string.IsNullOrEmpty(apiUrl) || string.IsNullOrEmpty(apiKey))
