@@ -19,8 +19,11 @@
   </PropertyGroup>
   
   <ItemGroup>
+    <Compile Remove="Build\**" />
     <Compile Remove="packages\**" />
+    <EmbeddedResource Remove="Build\**" />
     <EmbeddedResource Remove="packages\**" />
+    <None Remove="Build\**" />
     <None Remove="packages\**" />
   </ItemGroup>
   

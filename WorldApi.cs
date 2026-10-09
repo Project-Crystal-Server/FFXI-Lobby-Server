@@ -30,6 +30,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Threading.Tasks;
+using static System.Collections.Specialized.BitVector32;
 
 namespace Crystal.FFXILobbyServer
 {
@@ -55,6 +56,8 @@ namespace Crystal.FFXILobbyServer
         // The status and JSON body of a call; (0, null) when the world could not be reached or its answer is not JSON
         private (int Status, JsonObject Body) Send(HttpMethod method, string path, JsonObject body = null, string session = null)
         {
+            debugLogSend(method.ToString(), path, body?.ToString() ?? "");
+
             try
             {
                 using HttpRequestMessage request = new(method, World.ApiUrl.TrimEnd('/') + path);
@@ -66,6 +69,7 @@ namespace Crystal.FFXILobbyServer
 
                 using HttpResponseMessage response = Http.Send(request);
                 string text = new System.IO.StreamReader(response.Content.ReadAsStream()).ReadToEnd();
+                debugLogReceive(response.StatusCode.ToString(), path, text?.ToString() ?? "");
                 JsonObject answer = null;
                 try { answer = JsonNode.Parse(text) as JsonObject; } catch (JsonException) { }
                 if (answer == null)
@@ -196,6 +200,39 @@ namespace Crystal.FFXILobbyServer
             if (status == 200 && body["contentId"] is JsonNode contentId && body["charId"] is JsonNode charId)
                 return (contentId.GetValue<uint>(), charId.GetValue<uint>());
             return null;
+        }
+
+        private void debugLogSend(string method, string path, string body)
+        {
+            string log =
+$@"
+╔════════════════════════════════════════════════╗
+║ SENDING
+║ Path: {path}
+║ Method: {method}
+
+{body}
+
+╚════════════════════════════════════════════════╝
+
+";
+            Program.Log.Debug(log);
+        }
+        private void debugLogReceive(string responseCode, string path, string body)
+        {
+            string log =
+$@"
+╔════════════════════════════════════════════════╗
+║ RECEIVNG
+║ Path: {path}
+║ Status: {responseCode}
+
+{body}
+
+╚════════════════════════════════════════════════╝
+
+";
+            Program.Log.Debug(log);
         }
     }
 
