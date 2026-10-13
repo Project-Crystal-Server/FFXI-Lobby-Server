@@ -104,7 +104,7 @@ namespace Crystal.FFXILobbyServer.Network
             Data = new byte[packetSize - HEADER_SIZE];
             Array.Copy(bytes, offset + HEADER_SIZE, Data, 0, packetSize - HEADER_SIZE);
 
-            offset += packetSize + HEADER_SIZE;
+            offset += packetSize; // packetSize counts the header
         }
 
         public FFXIPacket(FFXIPacketHeader header, byte[] data)
