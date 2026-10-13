@@ -168,7 +168,10 @@ namespace Crystal.FFXILobbyServer
             byte[] digest = new byte[0x14];
             Array.Copy(Password, digest, 0x10);
             Array.Copy(BitConverter.GetBytes(Md5Key), 0, digest, 0x10, 4);
-            return incomingPassword.SequenceEqual(MD5.HashData(digest));
+            if (incomingPassword.SequenceEqual(MD5.HashData(digest)))
+                return true;
+            Program.Log.Warn($"{PolProData} - Request password did not match the lobby key");
+            return false;
         }
 
         public Character[] GetCharacters(bool invalidate)
@@ -240,18 +243,20 @@ namespace Crystal.FFXILobbyServer
             return 0;
         }
 
-        public WorldServerInfo? DoSelect(uint contentId, uint ffxiIdWorld, uint serverAddress, uint port)
+        // The world to send the client to, or null with the lobby error code to send
+        public WorldServerInfo? DoSelect(uint contentId, uint ffxiIdWorld, uint serverAddress, uint port, out uint error)
         {
             byte[] key = new byte[0x14];
             Array.Copy(Password, key, 0x10);
             Array.Copy(BitConverter.GetBytes(Md5Key + 4), 0, key, 0x10, 4);
 
             lock (MemberLocks.GetOrAdd(PolProData, _ => new object()))
-                return SelectLocked(contentId, ffxiIdWorld, key);
+                return SelectLocked(contentId, ffxiIdWorld, key, out error);
         }
 
-        private WorldServerInfo? SelectLocked(uint contentId, uint ffxiIdWorld, byte[] key)
+        private WorldServerInfo? SelectLocked(uint contentId, uint ffxiIdWorld, byte[] key, out uint error)
         {
+            error = WorldApi.ERR_WORLD_SERVER;
             // This shit is stupid but we gotta find the world id to delete from the correct work.
             CharacterPrimitive[] contentIds = Database.GetFFXIContentIds(PolProData);
             foreach (CharacterPrimitive chara in contentIds)
@@ -265,6 +270,7 @@ namespace Crystal.FFXILobbyServer
                         if (otherWorld != null && otherWorld.Api.AnyOnline([other.ContentsSubUserId & 0xFFFF]))
                         {
                             Program.Log.Warn($"{PolProData} - Character {other.ContentsSubUserId & 0xFFFF} is still logged in");
+                            error = WorldApi.ERR_ALREADY_LOGGED_IN;
                             return null;
                         }
                     }
@@ -277,6 +283,7 @@ namespace Crystal.FFXILobbyServer
                     // fail here and the lobby sends an error instead.
                     if (!world.Api.Enter(contentId, ffxiIdWorld, key, world.ServerIp, world.ServerPort, myIp, ClientVersion, ClientExpansions, AccountService.NewToken()))
                         return null;
+                    error = 0;
                     return new(world.World.Num, world.ServerIp, world.ServerPort, world.CacheIp, world.CachePort);
                 }
             }
@@ -284,7 +291,8 @@ namespace Crystal.FFXILobbyServer
             return null;
         }
 
-        public void DoDelete(uint contentId, uint ffxiIdWorld)
+        // Whether the character is gone: the world let it go and the lobby freed its slot
+        public bool DoDelete(uint contentId, uint ffxiIdWorld)
         {
             byte[] key = new byte[0x14];
             Array.Copy(Password, key, 0x10);
@@ -298,11 +306,10 @@ namespace Crystal.FFXILobbyServer
                 {
                     WorldContainer world = Server.GetWorldFromSubContentId(chara.ContentsSubUserId);
                     // The slot is freed only once the world has let the character go
-                    if (world.Api.DeleteCharacter(contentId, ffxiIdWorld))
-                        Database.UpdateFFXISubContentId(contentId, 0, "");
-                    return;
+                    return world != null && world.Api.DeleteCharacter(contentId, ffxiIdWorld) && Database.UpdateFFXISubContentId(contentId, 0, "");
                 }
             }
+            return false;
         }
 
         // 0, or the lobby error code to send
@@ -333,8 +340,11 @@ namespace Crystal.FFXILobbyServer
             return WorldApi.ERR_NAME_SERVER;
         }
 
+        // The client moves its key on an error answer just as on an OK one
         public void SendError(uint errCode)
         {
+            Md5Key++;
+            Program.Log.Warn($"{this} - Sent lobby error {errCode}");
             SendPacket(ErrorPkt.OPCODE, new ErrorPkt() { ErrCode = errCode }.Bytes);
         }
 

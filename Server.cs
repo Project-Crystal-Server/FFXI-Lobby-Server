@@ -210,7 +210,7 @@ namespace Crystal.FFXILobbyServer
                                 }
                                 else
                                 {
-                                    conn.SendError(0);
+                                    conn.SendError(WorldApi.ERR_WORLD_SERVER);
                                 }
                             }
                             else
@@ -252,7 +252,7 @@ namespace Crystal.FFXILobbyServer
                                     Program.Log.Info($"{conn.GetPolProData()} - PreCreateing a character");
                                 }
                                 else
-                                    conn.SendError(0);
+                                    conn.SendError(WorldApi.ERR_WORLD_SERVER);
                             }
                             else
                                 conn.SendError(0);
@@ -283,7 +283,7 @@ namespace Crystal.FFXILobbyServer
                             {
                                 conn.GetCharacters(true);
 
-                                WorldServerInfo info = conn.DoSelect(requestPkt.FFXIId, requestPkt.FFXIIdWorld, 0x2601A8C0, 54230);
+                                WorldServerInfo info = conn.DoSelect(requestPkt.FFXIId, requestPkt.FFXIIdWorld, 0x2601A8C0, 54230, out uint selectError);
 
                                 if (info != null)
                                 {
@@ -307,7 +307,7 @@ namespace Crystal.FFXILobbyServer
                                     Program.Log.Info($"{conn.GetPolProData()} - Selected a character");
                                 }
                                 else
-                                    conn.SendError(0);
+                                    conn.SendError(selectError);
                             }
                             else
                                 conn.SendError(0);
@@ -317,11 +317,15 @@ namespace Crystal.FFXILobbyServer
                             DeleteCharPkt requestPkt = DeleteCharPkt.Cast(packet.Data);
                             if (conn.VerifyPassword(requestPkt.Password))
                             {
-                                conn.DoDelete(requestPkt.FFXIId, requestPkt.FFXIIdWorld);
-                                conn.Md5Key++;
-                                conn.SendPacket(OkPkt.OPCODE, new OkPkt().Bytes);
-                                conn.ClearCharacters();
-                                Program.Log.Info($"{conn.GetPolProData()} - Deleting a character");
+                                if (conn.DoDelete(requestPkt.FFXIId, requestPkt.FFXIIdWorld))
+                                {
+                                    conn.Md5Key++;
+                                    conn.SendPacket(OkPkt.OPCODE, new OkPkt().Bytes);
+                                    conn.ClearCharacters();
+                                    Program.Log.Info($"{conn.GetPolProData()} - Deleting a character");
+                                }
+                                else
+                                    conn.SendError(WorldApi.ERR_WORLD_SERVER);
                             }
                             else
                                 conn.SendError(0);

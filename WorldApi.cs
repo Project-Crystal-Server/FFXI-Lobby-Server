@@ -39,9 +39,11 @@ namespace Crystal.FFXILobbyServer
     // silence for an answer.
     public class WorldApi
     {
-        // Lobby error codes the client shows for a name (LandSandBoat login_errors.h)
-        public const uint ERR_NAME_UNAVAILABLE = 313; // "The character name you entered is unavailable."
-        public const uint ERR_NAME_SERVER      = 314; // "Failed to register with the name server."
+        // Lobby error codes; the client shows code N as FFXI-3N
+        public const uint ERR_ALREADY_LOGGED_IN = 201; // "Same character already logged in."
+        public const uint ERR_WORLD_SERVER      = 305; // "Unable to connect to the world server. Specified operation failed."
+        public const uint ERR_NAME_UNAVAILABLE  = 313; // "The character name you entered is unavailable."
+        public const uint ERR_NAME_SERVER       = 314; // "Failed to register with the name server."
 
         private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(10) };
 
