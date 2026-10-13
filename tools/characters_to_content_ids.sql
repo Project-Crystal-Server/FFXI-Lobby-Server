@@ -16,7 +16,7 @@ PREPARE stmt FROM @sql;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
 
--- Characters no slot points at were deleted: LandSandBoat keeps them with accid 0.
+-- Characters no slot points at were deleted: the world keeps them with accid 0.
 SET @sql = CONCAT(
     'UPDATE ', @world_db, '.chars c ',
     'SET c.original_accid = c.accid, c.accid = 0 ',
