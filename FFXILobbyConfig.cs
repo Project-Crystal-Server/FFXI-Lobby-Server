@@ -43,8 +43,7 @@ namespace Crystal.FFXILobbyServer
 
         public readonly List<WorldContainer> WorldList;
 
-        // Expansion bits of the lobby login answer (LandSandBoat login_helpers.h EXPANSION_DISPLAY), by the name
-        // <expansions enabled="..."/> uses. The base game is always enabled.
+        // Expansion bits of the lobby login answer, by the name <expansions enabled="..."/> uses. The base game is always enabled.
         private static readonly Dictionary<string, uint> ExpansionBits = new(StringComparer.OrdinalIgnoreCase)
         {
             ["ROTZ"] = 0x0002,
