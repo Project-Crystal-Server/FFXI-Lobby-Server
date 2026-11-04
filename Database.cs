@@ -39,13 +39,18 @@ namespace Crystal.FFXILobbyServer
         public static string POL_DB_USERNAME = "root";
         public static string POL_DB_PASSWORD = "";
 
-        public static Tuple<byte[], string> GetPlayonlineRandomValue(byte[] authHash)
+        // The member's POL profile for the session holding this auth hash; null when there is none
+        public static PolProfileData RetrievePolProfileData(byte[] authHash)
         {
             using MySqlConnection conn = new($"Server={POL_DB_HOST}; Port={POL_DB_PORT}; Database={POL_DB_NAME}; UID={POL_DB_USERNAME}; Password={POL_DB_PASSWORD}");
             try
             {
                 conn.Open();
-                MySqlCommand cmd = new("SELECT polRandomValueBinary, polId FROM sessions WHERE polContentAuthHash = @authHash", conn);
+                MySqlCommand cmd = new(@"
+                    SELECT s.polRandomValueBinary, s.polId, a.adminData <> 0 AS isPolAccountSuspended
+                    FROM sessions s
+                    INNER JOIN accounts a ON a.polId = s.polId
+                    WHERE s.polContentAuthHash = @authHash", conn);
                 cmd.Parameters.AddWithValue("@authHash", authHash);
 
                 using MySqlDataReader Reader = cmd.ExecuteReader();
@@ -55,8 +60,12 @@ namespace Crystal.FFXILobbyServer
                     long bytesRead = Reader.GetBytes("polRandomValueBinary", 0, randomValue, 0, 0x10);
                     if (bytesRead == 0x10)
                     {
-                        string polProData = Reader.GetString("polId");
-                        return new(randomValue, polProData);
+                        return new PolProfileData
+                        {
+                            RandomValue           = randomValue,
+                            PolId                 = Utils.PolProDataToPolId(Reader.GetString("polId")),
+                            IsPolAccountSuspended = Reader.GetBoolean("isPolAccountSuspended"),
+                        };
                     }
                 }
             }
@@ -120,6 +129,32 @@ namespace Crystal.FFXILobbyServer
                 }
             }
             return [];
+        }
+
+        // True when the content id is one of the member's FFXI slots and holds no character yet. The client names the
+        // content id it creates on, so the lobby checks it is the member's own before asking a world to fill it.
+        public static bool IsEmptyFFXISlot(uint contentId, string polProData)
+        {
+            using MySqlConnection conn = new($"Server={POL_DB_HOST}; Port={POL_DB_PORT}; Database={POL_DB_NAME}; UID={POL_DB_USERNAME}; Password={POL_DB_PASSWORD}");
+            try
+            {
+                conn.Open();
+                MySqlCommand cmd = new(@"
+                    SELECT COUNT(*) FROM characters
+                    WHERE (id & 0xFFFFFFFF) = @contentId AND polId = @polId AND contentClass = 1 AND subId = 0", conn);
+                cmd.Parameters.AddWithValue("@contentId", contentId);
+                cmd.Parameters.AddWithValue("@polId", polProData);
+                return Convert.ToInt64(cmd.ExecuteScalar()) == 1;
+            }
+            catch (MySqlException e)
+            {
+                Program.Log.Error(e.ToString());
+                return false;
+            }
+            finally
+            {
+                conn.Dispose();
+            }
         }
 
         public static bool UpdateFFXISubContentId(ulong contentId, uint subContentId, string name)

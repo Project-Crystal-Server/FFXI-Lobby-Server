@@ -88,15 +88,6 @@ namespace Crystal.FFXILobbyServer
 
             // Setup Server
             Server server = new Server(config.WorldList) { Expansions = config.Expansions };
-            if (!string.IsNullOrEmpty(config.AccountsListen))
-            {
-                if (!IPEndPoint.TryParse(config.AccountsListen, out IPEndPoint accountsEndPoint) || accountsEndPoint.Port == 0)
-                {
-                    Log.Error($"lobby.cfg: <accounts listen=\"{config.AccountsListen}\"/> is not an address and port.");
-                    return;
-                }
-                server.Accounts = new AccountService(accountsEndPoint, config.WorldList);
-            }
 
             // Setup Service
             var builder = Host.CreateApplicationBuilder(args);
@@ -121,7 +112,6 @@ namespace Crystal.FFXILobbyServer
             {
                 Console.ForegroundColor = ConsoleColor.DarkGreen;
                 Server.StartServer(54001);
-                Server.Accounts?.Start(stoppingToken);
                 Console.ForegroundColor = ConsoleColor.Gray;
             }
             catch (ApplicationException e)
@@ -132,19 +122,6 @@ namespace Crystal.FFXILobbyServer
                 throw;
             }
             await Task.Delay(Timeout.Infinite, stoppingToken);
-        }
-
-        public override async Task StopAsync(CancellationToken cancellationToken)
-        {
-            try
-            {
-                Server.Accounts?.Stop();
-            }
-            catch (Exception ex)
-            {
-                Program.Log.Debug($"Error stopping server: {ex.Message}");
-            }
-            await base.StopAsync(cancellationToken);
         }
     }
 }

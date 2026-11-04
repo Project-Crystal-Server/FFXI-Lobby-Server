@@ -35,16 +35,10 @@ namespace Crystal.FFXILobbyServer
 {
     // How the lobby reaches a world: the world server's /api/lobby, never its database. Every call carries the world's
     // apiKey (the LOBBY_API_KEY of its settings/network.lua) as a bearer token. A world that cannot be reached or
-    // answers wrongly gives the caller its "unknown" (null, false, ERR_NAME_SERVER), so a lobby never takes a world's
-    // silence for an answer.
+    // answers wrongly gives the caller its "unknown" (null, false, LobbyError.NameServer), so a lobby never takes a
+    // world's silence for an answer.
     public class WorldApi
     {
-        // Lobby error codes; the client shows code N as FFXI-3N
-        public const uint ERR_ALREADY_LOGGED_IN = 201; // "Same character already logged in."
-        public const uint ERR_WORLD_SERVER      = 305; // "Unable to connect to the world server. Specified operation failed."
-        public const uint ERR_NAME_UNAVAILABLE  = 313; // "The character name you entered is unavailable."
-        public const uint ERR_NAME_SERVER       = 314; // "Failed to register with the name server."
-
         private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(10) };
 
         private readonly WorldContainer World;
@@ -55,14 +49,12 @@ namespace Crystal.FFXILobbyServer
         }
 
         // The status and JSON body of a call; (0, null) when the world could not be reached or its answer is not JSON
-        private (int Status, JsonObject Body) Send(HttpMethod method, string path, JsonObject body = null, string session = null)
+        private (int Status, JsonObject Body) Send(HttpMethod method, string path, JsonObject body = null)
         {
             try
             {
                 using HttpRequestMessage request = new(method, World.ApiUrl.TrimEnd('/') + path);
                 request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", World.ApiKey);
-                if (session != null)
-                    request.Headers.Add("X-Lobby-Session", session);
                 if (body != null)
                     request.Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json");
 
@@ -113,17 +105,18 @@ namespace Crystal.FFXILobbyServer
         {
             var (status, body) = Send(HttpMethod.Post, "/api/lobby/characters/check-name", new JsonObject { ["name"] = name });
             if (status != 200)
-                return ErrorOf(body, ERR_NAME_SERVER);
-            return body["error"]?.GetValue<uint>() ?? ERR_NAME_SERVER;
+                return ErrorOf(body, LobbyError.NameServer);
+            return body["error"]?.GetValue<uint>() ?? LobbyError.NameServer;
         }
 
         // The new character's id on the world, or 0 with the error to show
-        public uint CreateCharacter(uint contentId, string name, CharaInfo info, uint startZone, out uint error)
+        public uint CreateCharacter(uint contentId, ulong polId, string name, CharaInfo info, uint startZone, out uint error)
         {
             error = 0;
             var (status, body) = Send(HttpMethod.Post, "/api/lobby/characters/create", new JsonObject
             {
                 ["contentId"] = contentId,
+                ["polId"] = polId,
                 ["name"] = name,
                 ["race"] = info.RaceNum,
                 // The face is the low byte of FaceModelId (0-15, 8B = 15), the byte at offset 60 of the create
@@ -137,7 +130,7 @@ namespace Crystal.FFXILobbyServer
             if (status == 200 && body["charId"] is JsonNode charId)
                 return charId.GetValue<uint>();
 
-            error = ErrorOf(body, ERR_NAME_SERVER);
+            error = ErrorOf(body, LobbyError.NameServer);
             if (body != null)
                 LogRefusal($"create {name}", status, body);
             return 0;
@@ -151,7 +144,7 @@ namespace Crystal.FFXILobbyServer
                 return 0;
             if (body != null)
                 LogRefusal($"rename character {charId}", status, body);
-            return ErrorOf(body, ERR_NAME_SERVER);
+            return ErrorOf(body, LobbyError.NameServer);
         }
 
         public bool DeleteCharacter(uint contentId, uint charId)
@@ -170,9 +163,10 @@ namespace Crystal.FFXILobbyServer
             return status != 200 || body["online"]?.GetValue<bool>() != false;
         }
 
-        // Puts the character's session in the world, for the map server the client is sent to. False when the world
-        // refused (the character is still in the world, is not on that content id) or could not be asked.
-        public bool Enter(uint contentId, uint charId, byte[] key, uint serverAddress, uint serverPort, uint clientAddress, string clientVersion, uint clientExpansions, string lobbyToken)
+        // Puts the character's session in the world, for the map server the client is sent to, and tells the world which
+        // PlayOnline account it belongs to. 0, or the error to show: already logged in when the world has this character
+        // or another of the account in it, else the error the world names (332 for a banned account) or world server.
+        public uint Enter(uint contentId, uint charId, ulong polId, byte[] key, uint serverAddress, uint serverPort, uint clientAddress, string clientVersion, uint clientExpansions)
         {
             var (status, body) = Send(HttpMethod.Post, "/api/lobby/sessions/enter", new JsonObject
             {
@@ -184,21 +178,15 @@ namespace Crystal.FFXILobbyServer
                 ["clientAddr"] = clientAddress,
                 ["clientVersion"] = clientVersion,
                 ["clientExpansions"] = clientExpansions,
-                ["lobbyToken"] = lobbyToken,
+                ["account"] = new JsonObject { ["polId"] = polId },
             });
-            if (status != 200 && body != null)
+            if (status == 200)
+                return 0;
+            if (body != null)
                 LogRefusal($"admit character {charId}", status, body);
-            return status == 200;
+            return status == 409 ? LobbyError.AlreadyLoggedIn : ErrorOf(body, LobbyError.WorldServer);
         }
 
-        // The content id and character of the world's live session with this token, if there is one
-        public (uint ContentId, uint CharId)? SessionByToken(string token)
-        {
-            var (status, body) = Send(HttpMethod.Get, "/api/lobby/session", session: token);
-            if (status == 200 && body["contentId"] is JsonNode contentId && body["charId"] is JsonNode charId)
-                return (contentId.GetValue<uint>(), charId.GetValue<uint>());
-            return null;
-        }
     }
 
     // A character as the world lists it

@@ -40,9 +40,6 @@ namespace Crystal.FFXILobbyServer
 
         public readonly List<WorldContainer> WorldList;
 
-        // Started next to the lobby when lobby.cfg has <accounts listen="..."/>
-        public AccountService Accounts;
-
         // The expansions lobby.cfg enables, as the lobby login's bitmask; null: whatever the client has installed
         public uint? Expansions;
 
@@ -176,7 +173,8 @@ namespace Crystal.FFXILobbyServer
                         if (packet.Header.opcode == LobbyLoginPkt.OPCODE)
                         {
                             LobbyLoginPkt loginPkt = LobbyLoginPkt.Cast(packet.Data);
-                            if (conn.Login(loginPkt, out uint key, out ulong expCode))
+                            uint loginError = conn.Login(loginPkt, out uint key, out ulong expCode);
+                            if (loginError == 0)
                             {
                                 LobbyKeyPkt responsePkt = new()
                                 {
@@ -187,7 +185,7 @@ namespace Crystal.FFXILobbyServer
                                 Program.Log.Info($"{conn.GetPolProData()} - Logged into lobby server");
                             }
                             else
-                                conn.SendError(100);
+                                conn.SendError(loginError);
                         }
                         else if (packet.Header.opcode == GetCharPkt.OPCODE)
                         {
@@ -210,7 +208,7 @@ namespace Crystal.FFXILobbyServer
                                 }
                                 else
                                 {
-                                    conn.SendError(WorldApi.ERR_WORLD_SERVER);
+                                    conn.SendError(LobbyError.WorldServer);
                                 }
                             }
                             else
@@ -246,13 +244,13 @@ namespace Crystal.FFXILobbyServer
                                     conn.SendError(nameError);
                                 else if (world != null)
                                 {
-                                    conn.SetRequestedCharaName(requestPkt.Name);
+                                    conn.SetRequestedCharaName(requestPkt.Name, world);
                                     conn.Md5Key++;
                                     conn.SendPacket(OkPkt.OPCODE, new OkPkt().Bytes);
                                     Program.Log.Info($"{conn.GetPolProData()} - PreCreateing a character");
                                 }
                                 else
-                                    conn.SendError(WorldApi.ERR_WORLD_SERVER);
+                                    conn.SendError(LobbyError.WorldServer);
                             }
                             else
                                 conn.SendError(0);
@@ -325,7 +323,7 @@ namespace Crystal.FFXILobbyServer
                                     Program.Log.Info($"{conn.GetPolProData()} - Deleting a character");
                                 }
                                 else
-                                    conn.SendError(WorldApi.ERR_WORLD_SERVER);
+                                    conn.SendError(LobbyError.WorldServer);
                             }
                             else
                                 conn.SendError(0);

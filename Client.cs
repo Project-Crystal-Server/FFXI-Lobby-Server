@@ -48,25 +48,27 @@ namespace Crystal.FFXILobbyServer
         // PolPro
         private bool IsLoggedIn = false;
 
-        private string PolProData = "";
+        private ulong  PolId = 0;            // the numeric POL ID worlds key the account on (chars.pol_id)
         private string ClientVersion = "";   // version string of the lobby login (the client's patch.ver)
         private uint   ClientExpansions = 0; // expansions the client has installed
         private byte[] Password;
         public uint Md5Key;
 
-        // Creating characters is one at a time across the lobby, so two new characters cannot take the same name or
-        // character id; selecting is one at a time per PlayOnline member, so two selections cannot both find the
-        // member's characters out of the world.
+        // Renaming is one at a time across the lobby; selecting is one at a time per PlayOnline member, so two
+        // selections cannot both find the member's characters out of the world. Creating needs no lock: a member has
+        // one POL session, and the world checks the name again when it creates the character.
         private static readonly object CreateLock = new();
-        private static readonly ConcurrentDictionary<string, object> MemberLocks = new();
+        private static readonly ConcurrentDictionary<ulong, object> MemberLocks = new();
 
         // Session
         private Character[] CachedCharaList = null;
         private string RequestedNewCharName = "";
+        private WorldContainer RequestedNewCharWorld = null;
 
         public bool IsDisconnected() => Disconnected;
 
-        public string GetPolProData() => PolProData;
+        // The POL ID string the lobby's own tables key the member on
+        public string GetPolProData() => Utils.PolIdToPolProData(PolId);
 
         public string GetAddress() => $"{ClientIp}:{ClientPort}";
 
@@ -110,36 +112,47 @@ namespace Crystal.FFXILobbyServer
 
         public override string ToString()
         {
-            return IsLoggedIn ? PolProData : ClientIp.ToString();
+            return IsLoggedIn ? GetPolProData() : ClientIp.ToString();
         }
 
-        // Request info from PolPro
-        public bool Login(LobbyLoginPkt loginPkt, out uint key, out ulong serverExpCode)
+        // Request info from PolPro. 0, or the lobby error code to send.
+        public uint Login(LobbyLoginPkt loginPkt, out uint key, out ulong serverExpCode)
         {
             if (!Utils.DecryptAuthPassword(loginPkt.AuthCode, out byte[] authHash, out uint clientIp, out ushort clientPort))
             {
                 key = 0;
                 serverExpCode = 0;
-                return false;
+                return LobbyError.LoginFailed;
             }
 
-            var polData = Database.GetPlayonlineRandomValue(authHash);
+            PolProfileData profile = Database.RetrievePolProfileData(authHash);
 
-            if (polData == null)
+            if (profile == null)
             {
                 key = 0;
                 serverExpCode = 0;
-                return false;
+                return LobbyError.LoginFailed;
             }
 
-            Password = polData.Item1;
-            PolProData = polData.Item2;
+            Password = profile.RandomValue;
+            PolId = profile.PolId;
 
-            if (Password == null)
+            if (PolId == 0)
+                Program.Log.Error($"{ClientIp} - Session's POL ID is malformed (Utils.PolProDataToPolId gave 0); refusing the login");
+
+            if (Password == null || PolId == 0)
             {
                 key = 0;
                 serverExpCode = 0;
-                return false;
+                return LobbyError.LoginFailed;
+            }
+
+            if (profile.IsPolAccountSuspended)
+            {
+                Program.Log.Warn($"{GetPolProData()} - Account is suspended on the POL side; refusing the login");
+                key = 0;
+                serverExpCode = 0;
+                return LobbyError.Banned;
             }
 
             Md5Key = BitConverter.ToUInt32(RandomNumberGenerator.GetBytes(4));
@@ -155,7 +168,7 @@ namespace Crystal.FFXILobbyServer
             Program.Log.Info($"Lobby login: server expansions 0x{serverExpCode:X}, client installed 0x{loginPkt.ClientExpCode:X}, version {System.Text.Encoding.ASCII.GetString(loginPkt.VersionCode).TrimEnd('\0')}");
 
             IsLoggedIn = true;
-            return true;
+            return LobbyError.None;
         }
 
         // Verify the received pwd is right
@@ -170,7 +183,7 @@ namespace Crystal.FFXILobbyServer
             Array.Copy(BitConverter.GetBytes(Md5Key), 0, digest, 0x10, 4);
             if (incomingPassword.SequenceEqual(MD5.HashData(digest)))
                 return true;
-            Program.Log.Warn($"{PolProData} - Request password did not match the lobby key");
+            Program.Log.Warn($"{GetPolProData()} - Request password did not match the lobby key");
             return false;
         }
 
@@ -180,7 +193,7 @@ namespace Crystal.FFXILobbyServer
                 return [.. CachedCharaList];
 
             // Get all the ids
-            CharacterPrimitive[] contentIds = Database.GetFFXIContentIds(PolProData);
+            CharacterPrimitive[] contentIds = Database.GetFFXIContentIds(GetPolProData());
 
             // Grab chara data from each server
             CachedCharaList = Database.GetCharacters(Server.WorldList, contentIds);
@@ -223,22 +236,29 @@ namespace Crystal.FFXILobbyServer
                     }
             }
 
-            // Create a new character and update the content id
-            WorldContainer world = Server.WorldList[charaInfo.WorldNum];
-            lock (CreateLock)
+            // Create the character on the world the name was checked against, which the client picked by name
+            WorldContainer world = RequestedNewCharWorld;
+            if (world == null)
+                return LobbyError.WorldServer;
+            // The client names the content id, so create only on one of the member's own empty slots
+            if (!Database.IsEmptyFFXISlot(contentId, GetPolProData()))
             {
-                // The world checks the name again when it creates the character
-                uint charId = world.Api.CreateCharacter(contentId, RequestedNewCharName, charaInfo, startZone, out uint error);
-                if (charId == 0)
-                    return error != 0 ? error : WorldApi.ERR_NAME_SERVER;
-                // The character is the world's now; the lobby records which content id slot holds it
-                uint newSubId = (world.World.Num << 16) | charId;
-                if (!Database.UpdateFFXISubContentId(contentId, newSubId, RequestedNewCharName))
-                {
-                    // Without the record the character would sit on the world out of anyone's reach
-                    world.Api.DeleteCharacter(contentId, charId);
-                    return WorldApi.ERR_NAME_SERVER;
-                }
+                Program.Log.Warn($"{GetPolProData()} - Refused to create a character on content id {contentId}, which is not an empty slot of theirs");
+                return LobbyError.NameServer;
+            }
+
+            // The world checks the name again when it creates the character
+            uint charId = world.Api.CreateCharacter(contentId, PolId, RequestedNewCharName, charaInfo, startZone, out uint error);
+            if (charId == 0)
+                return error != 0 ? error : LobbyError.NameServer;
+
+            // The character is the world's now; the lobby records which content id slot holds it
+            uint newSubId = (world.World.Num << 16) | charId;
+            if (!Database.UpdateFFXISubContentId(contentId, newSubId, RequestedNewCharName))
+            {
+                // Without the record the character would sit on the world out of anyone's reach
+                world.Api.DeleteCharacter(contentId, charId);
+                return LobbyError.NameServer;
             }
             return 0;
         }
@@ -250,15 +270,15 @@ namespace Crystal.FFXILobbyServer
             Array.Copy(Password, key, 0x10);
             Array.Copy(BitConverter.GetBytes(Md5Key + 4), 0, key, 0x10, 4);
 
-            lock (MemberLocks.GetOrAdd(PolProData, _ => new object()))
+            lock (MemberLocks.GetOrAdd(PolId, _ => new object()))
                 return SelectLocked(contentId, ffxiIdWorld, key, out error);
         }
 
         private WorldServerInfo? SelectLocked(uint contentId, uint ffxiIdWorld, byte[] key, out uint error)
         {
-            error = WorldApi.ERR_WORLD_SERVER;
+            error = LobbyError.WorldServer;
             // This shit is stupid but we gotta find the world id to delete from the correct work.
-            CharacterPrimitive[] contentIds = Database.GetFFXIContentIds(PolProData);
+            CharacterPrimitive[] contentIds = Database.GetFFXIContentIds(GetPolProData());
             foreach (CharacterPrimitive chara in contentIds)
             {
                 if (chara.ContentsId == contentId && (chara.ContentsSubUserId & 0xFFFF) == ffxiIdWorld)
@@ -269,8 +289,8 @@ namespace Crystal.FFXILobbyServer
                         WorldContainer otherWorld = other.ContentsSubUserId == 0 ? null : Server.GetWorldFromSubContentId(other.ContentsSubUserId);
                         if (otherWorld != null && otherWorld.Api.AnyOnline([other.ContentsSubUserId & 0xFFFF]))
                         {
-                            Program.Log.Warn($"{PolProData} - Character {other.ContentsSubUserId & 0xFFFF} is still logged in");
-                            error = WorldApi.ERR_ALREADY_LOGGED_IN;
+                            Program.Log.Warn($"{GetPolProData()} - Character {other.ContentsSubUserId & 0xFFFF} is still logged in");
+                            error = LobbyError.AlreadyLoggedIn;
                             return null;
                         }
                     }
@@ -281,7 +301,8 @@ namespace Crystal.FFXILobbyServer
                     // the address Server.cs passes in, which is hardcoded.
                     // No session (deleted, database error): the map server would refuse the character anyway, so
                     // fail here and the lobby sends an error instead.
-                    if (!world.Api.Enter(contentId, ffxiIdWorld, key, world.ServerIp, world.ServerPort, myIp, ClientVersion, ClientExpansions, AccountService.NewToken()))
+                    error = world.Api.Enter(contentId, ffxiIdWorld, PolId, key, world.ServerIp, world.ServerPort, myIp, ClientVersion, ClientExpansions);
+                    if (error != 0)
                         return null;
                     error = 0;
                     return new(world.World.Num, world.ServerIp, world.ServerPort, world.CacheIp, world.CachePort);
@@ -299,7 +320,7 @@ namespace Crystal.FFXILobbyServer
             Array.Copy(BitConverter.GetBytes(Md5Key + 4), 0, key, 0x10, 4);
 
             // This shit is stupid but we gotta find the world id to delete from the correct work.
-            CharacterPrimitive[] contentIds = Database.GetFFXIContentIds(PolProData);
+            CharacterPrimitive[] contentIds = Database.GetFFXIContentIds(GetPolProData());
             foreach (CharacterPrimitive chara in contentIds)
             {
                 if (chara.ContentsId == contentId && (chara.ContentsSubUserId & 0xFFFF) == ffxiIdWorld)
@@ -320,7 +341,7 @@ namespace Crystal.FFXILobbyServer
             Array.Copy(BitConverter.GetBytes(Md5Key + 4), 0, key, 0x10, 4);
 
             // This shit is stupid but we gotta find the world id to delete from the correct work.
-            CharacterPrimitive[] contentIds = Database.GetFFXIContentIds(PolProData);
+            CharacterPrimitive[] contentIds = Database.GetFFXIContentIds(GetPolProData());
             foreach (CharacterPrimitive chara in contentIds)
             {
                 if (chara.ContentsId == contentId && (chara.ContentsSubUserId & 0xFFFF) == ffxiIdWorld)
@@ -332,12 +353,12 @@ namespace Crystal.FFXILobbyServer
                         if (error != 0)
                             return error;
                         if (!Database.UpdateFFXISubContentId(contentId, chara.ContentsSubUserId, newName))
-                            return WorldApi.ERR_NAME_SERVER;
+                            return LobbyError.NameServer;
                     }
                     return 0;
                 }
             }
-            return WorldApi.ERR_NAME_SERVER;
+            return LobbyError.NameServer;
         }
 
         // The client moves its key on an error answer just as on an OK one
@@ -348,9 +369,10 @@ namespace Crystal.FFXILobbyServer
             SendPacket(ErrorPkt.OPCODE, new ErrorPkt() { ErrCode = errCode }.Bytes);
         }
 
-        public void SetRequestedCharaName(string charaName)
+        public void SetRequestedCharaName(string charaName, WorldContainer world)
         {
             RequestedNewCharName = charaName;
+            RequestedNewCharWorld = world;
         }
     }
 }

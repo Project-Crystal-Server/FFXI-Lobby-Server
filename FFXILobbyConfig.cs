@@ -61,9 +61,6 @@ namespace Crystal.FFXILobbyServer
         // client's own installed set stands
         public readonly uint? Expansions;
 
-        // Where the account service listens (<accounts listen="127.0.0.1:54005"/>); null: not started
-        public readonly string AccountsListen;
-
         public FFXILobbyConfig(string path) 
         {
             Console.ForegroundColor = ConsoleColor.Yellow;
@@ -99,10 +96,6 @@ namespace Crystal.FFXILobbyServer
                     }
                     Expansions = mask;
                 }
-                if (cfgChildNode.Name.Equals("accounts"))
-                {
-                    AccountsListen = cfgChildNode.Attributes["listen"]?.InnerText;
-                }
                 if (cfgChildNode.Name.Equals("worlds"))
                 {
                     foreach (XmlNode worldNode in cfgChildNode.ChildNodes)
@@ -132,10 +125,7 @@ namespace Crystal.FFXILobbyServer
                                 srvPort,
                                 cacheIp,
                                 cachePort
-                            )
-                            {
-                                AccountsKey = worldNode.Attributes["accountsKey"]?.InnerText ?? "",
-                            });
+                            ));
                         }
                     }
                     WorldList = tempWorldList;

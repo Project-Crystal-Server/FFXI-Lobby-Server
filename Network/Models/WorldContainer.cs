@@ -33,9 +33,6 @@ namespace Crystal.FFXILobbyServer.Network.Models
         public readonly uint CacheIp;
         public readonly uint CachePort;
 
-        // The key this world's map servers show the account service (AccountService). Empty: the world cannot use it.
-        public string AccountsKey = "";
-
         public readonly WorldApi Api;
 
         public WorldContainer(World world, string apiUrl, string apiKey, uint srvIp, uint srvPort, uint cacheIp, uint cachePort)
