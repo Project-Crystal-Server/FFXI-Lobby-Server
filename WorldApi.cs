@@ -35,17 +35,10 @@ namespace Crystal.FFXILobbyServer
 {
     // How the lobby reaches a world: the world server's /api/lobby, never its database. Every call carries the world's
     // apiKey (the LOBBY_API_KEY of its settings/network.lua) as a bearer token. A world that cannot be reached or
-    // answers wrongly gives the caller its "unknown" (null, false, ERR_NAME_SERVER), so a lobby never takes a world's
-    // silence for an answer.
+    // answers wrongly gives the caller its "unknown" (null, false, LobbyError.NameServer), so a lobby never takes a
+    // world's silence for an answer.
     public class WorldApi
     {
-        // Lobby error codes; the client shows code N as FFXI-3N
-        public const uint ERR_ALREADY_LOGGED_IN = 201; // "Same character already logged in."
-        public const uint ERR_WORLD_SERVER      = 305; // "Unable to connect to the world server. Specified operation failed."
-        public const uint ERR_NAME_UNAVAILABLE  = 313; // "The character name you entered is unavailable."
-        public const uint ERR_NAME_SERVER       = 314; // "Failed to register with the name server."
-        public const uint ERR_BANNED            = 332; // "Could not connect to lobby server. Please check this title's news for announcements."
-
         private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(10) };
 
         private readonly WorldContainer World;
@@ -112,13 +105,12 @@ namespace Crystal.FFXILobbyServer
         {
             var (status, body) = Send(HttpMethod.Post, "/api/lobby/characters/check-name", new JsonObject { ["name"] = name });
             if (status != 200)
-                return ErrorOf(body, ERR_NAME_SERVER);
-            return body["error"]?.GetValue<uint>() ?? ERR_NAME_SERVER;
+                return ErrorOf(body, LobbyError.NameServer);
+            return body["error"]?.GetValue<uint>() ?? LobbyError.NameServer;
         }
 
-        // The new character's id on the world, or 0 with the error to show. Unknown when the world gave no answer, so it
-        // may have made the character; sending the same create again then answers its charid.
-        public uint CreateCharacter(uint contentId, ulong polId, string name, CharaInfo info, uint startZone, out uint error, out bool unknown)
+        // The new character's id on the world, or 0 with the error to show
+        public uint CreateCharacter(uint contentId, ulong polId, string name, CharaInfo info, uint startZone, out uint error)
         {
             error = 0;
             var (status, body) = Send(HttpMethod.Post, "/api/lobby/characters/create", new JsonObject
@@ -135,11 +127,10 @@ namespace Crystal.FFXILobbyServer
                 ["nation"] = info.TownNum,
                 ["startZone"] = startZone,
             });
-            unknown = status == 0;
             if (status == 200 && body["charId"] is JsonNode charId)
                 return charId.GetValue<uint>();
 
-            error = ErrorOf(body, ERR_NAME_SERVER);
+            error = ErrorOf(body, LobbyError.NameServer);
             if (body != null)
                 LogRefusal($"create {name}", status, body);
             return 0;
@@ -153,7 +144,7 @@ namespace Crystal.FFXILobbyServer
                 return 0;
             if (body != null)
                 LogRefusal($"rename character {charId}", status, body);
-            return ErrorOf(body, ERR_NAME_SERVER);
+            return ErrorOf(body, LobbyError.NameServer);
         }
 
         public bool DeleteCharacter(uint contentId, uint charId)
@@ -193,7 +184,7 @@ namespace Crystal.FFXILobbyServer
                 return 0;
             if (body != null)
                 LogRefusal($"admit character {charId}", status, body);
-            return status == 409 ? ERR_ALREADY_LOGGED_IN : ErrorOf(body, ERR_WORLD_SERVER);
+            return status == 409 ? LobbyError.AlreadyLoggedIn : ErrorOf(body, LobbyError.WorldServer);
         }
 
     }

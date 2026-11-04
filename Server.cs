@@ -208,7 +208,7 @@ namespace Crystal.FFXILobbyServer
                                 }
                                 else
                                 {
-                                    conn.SendError(WorldApi.ERR_WORLD_SERVER);
+                                    conn.SendError(LobbyError.WorldServer);
                                 }
                             }
                             else
@@ -250,7 +250,7 @@ namespace Crystal.FFXILobbyServer
                                     Program.Log.Info($"{conn.GetPolProData()} - PreCreateing a character");
                                 }
                                 else
-                                    conn.SendError(WorldApi.ERR_WORLD_SERVER);
+                                    conn.SendError(LobbyError.WorldServer);
                             }
                             else
                                 conn.SendError(0);
@@ -323,7 +323,7 @@ namespace Crystal.FFXILobbyServer
                                     Program.Log.Info($"{conn.GetPolProData()} - Deleting a character");
                                 }
                                 else
-                                    conn.SendError(WorldApi.ERR_WORLD_SERVER);
+                                    conn.SendError(LobbyError.WorldServer);
                             }
                             else
                                 conn.SendError(0);

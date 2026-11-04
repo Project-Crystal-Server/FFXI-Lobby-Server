@@ -39,16 +39,15 @@ namespace Crystal.FFXILobbyServer
         public static string POL_DB_USERNAME = "root";
         public static string POL_DB_PASSWORD = "";
 
-        // The member's POL random value, POL ID, numeric POL ID (PolProDataToPolId, 0 when the POL ID is malformed) and
-        // the account's adminData (0, or the POL message code an admin set to suspend it)
-        public static Tuple<byte[], string, ulong, ushort> GetPlayonlineRandomValue(byte[] authHash)
+        // The member's POL profile for the session holding this auth hash; null when there is none
+        public static PolProfileData RetrievePolProfileData(byte[] authHash)
         {
             using MySqlConnection conn = new($"Server={POL_DB_HOST}; Port={POL_DB_PORT}; Database={POL_DB_NAME}; UID={POL_DB_USERNAME}; Password={POL_DB_PASSWORD}");
             try
             {
                 conn.Open();
                 MySqlCommand cmd = new(@"
-                    SELECT s.polRandomValueBinary, s.polId, PolProDataToPolId(s.polId, 0, 0) AS polIdNumber, a.adminData
+                    SELECT s.polRandomValueBinary, s.polId, a.adminData <> 0 AS isPolAccountSuspended
                     FROM sessions s
                     INNER JOIN accounts a ON a.polId = s.polId
                     WHERE s.polContentAuthHash = @authHash", conn);
@@ -61,10 +60,12 @@ namespace Crystal.FFXILobbyServer
                     long bytesRead = Reader.GetBytes("polRandomValueBinary", 0, randomValue, 0, 0x10);
                     if (bytesRead == 0x10)
                     {
-                        string polProData = Reader.GetString("polId");
-                        ulong polIdNumber = Reader.IsDBNull(Reader.GetOrdinal("polIdNumber")) ? 0 : Reader.GetUInt64("polIdNumber");
-                        ushort adminData = Reader.GetUInt16("adminData");
-                        return new(randomValue, polProData, polIdNumber, adminData);
+                        return new PolProfileData
+                        {
+                            RandomValue           = randomValue,
+                            PolId                 = Utils.PolProDataToPolId(Reader.GetString("polId")),
+                            IsPolAccountSuspended = Reader.GetBoolean("isPolAccountSuspended"),
+                        };
                     }
                 }
             }
@@ -130,50 +131,25 @@ namespace Crystal.FFXILobbyServer
             return [];
         }
 
-        // Claims an empty FFXI slot of the member for a character being made on a world: the sub id becomes the claim
-        // (world number, charid 0). False when the content id is not the member's, or its slot is not empty.
-        public static bool ClaimFFXISlot(uint contentId, string polProData, uint claim)
+        // True when the content id is one of the member's FFXI slots and holds no character yet. The client names the
+        // content id it creates on, so the lobby checks it is the member's own before asking a world to fill it.
+        public static bool IsEmptyFFXISlot(uint contentId, string polProData)
         {
             using MySqlConnection conn = new($"Server={POL_DB_HOST}; Port={POL_DB_PORT}; Database={POL_DB_NAME}; UID={POL_DB_USERNAME}; Password={POL_DB_PASSWORD}");
             try
             {
                 conn.Open();
                 MySqlCommand cmd = new(@"
-                    UPDATE characters SET subId = @claim
+                    SELECT COUNT(*) FROM characters
                     WHERE (id & 0xFFFFFFFF) = @contentId AND polId = @polId AND contentClass = 1 AND subId = 0", conn);
-                cmd.Parameters.AddWithValue("@claim", claim);
                 cmd.Parameters.AddWithValue("@contentId", contentId);
                 cmd.Parameters.AddWithValue("@polId", polProData);
-                return cmd.ExecuteNonQuery() == 1;
+                return Convert.ToInt64(cmd.ExecuteScalar()) == 1;
             }
             catch (MySqlException e)
             {
                 Program.Log.Error(e.ToString());
                 return false;
-            }
-            finally
-            {
-                conn.Dispose();
-            }
-        }
-
-        // Empties a slot that still holds this claim; a slot that was bound or freed meanwhile is left alone
-        public static void ReleaseFFXIClaim(uint contentId, uint claim)
-        {
-            using MySqlConnection conn = new($"Server={POL_DB_HOST}; Port={POL_DB_PORT}; Database={POL_DB_NAME}; UID={POL_DB_USERNAME}; Password={POL_DB_PASSWORD}");
-            try
-            {
-                conn.Open();
-                MySqlCommand cmd = new(@"
-                    UPDATE characters SET subId = 0, name = ''
-                    WHERE (id & 0xFFFFFFFF) = @contentId AND contentClass = 1 AND subId = @claim", conn);
-                cmd.Parameters.AddWithValue("@claim", claim);
-                cmd.Parameters.AddWithValue("@contentId", contentId);
-                cmd.ExecuteNonQuery();
-            }
-            catch (MySqlException e)
-            {
-                Program.Log.Error(e.ToString());
             }
             finally
             {
@@ -251,8 +227,6 @@ namespace Crystal.FFXILobbyServer
 
             foreach (var (world, indexes) in asked)
             {
-                // A claim (charid 0) asks for whichever character the content id holds: a create the lobby lost the
-                // answer to
                 List<WorldCharacter> found = world.Api.ListCharacters(
                     [.. indexes.Select(i => ((uint)(contentIdList[i].ContentsId & 0xFFFFFFFFL), contentIdList[i].ContentsSubUserId & 0xFFFF))]);
                 if (found == null)
@@ -263,34 +237,17 @@ namespace Crystal.FFXILobbyServer
                     int indx = indexes[n];
                     CharacterPrimitive polChar = contentIdList[indx];
                     WorldCharacter c = found[n];
-                    uint subId = polChar.ContentsSubUserId;
-                    bool claimed = (subId & 0xFFFF) == 0;
                     if (c == null)
                     {
-                        if (claimed)
-                        {
-                            // The create never reached the world, or the world refused it
-                            Program.Log.Warn($"Content id {polChar.ContentsId}: no character on {world.World.Name} for its claim; freeing the slot");
-                            ReleaseFFXIClaim((uint)(polChar.ContentsId & 0xFFFFFFFFL), subId);
-                        }
-                        else
-                            Program.Log.Error($"Content id {polChar.ContentsId}: character {subId & 0xFFFF} is not in {world.World.Name}'s characters");
+                        Program.Log.Error($"Content id {polChar.ContentsId}: character {polChar.ContentsSubUserId & 0xFFFF} is not in {world.World.Name}'s characters");
                         continue;
-                    }
-                    if (claimed)
-                    {
-                        // The world made the character but the lobby never recorded it
-                        subId |= c.CharId;
-                        Program.Log.Warn($"Content id {polChar.ContentsId}: binding {c.Name} ({c.CharId}) on {world.World.Name} to its claim");
-                        if (!UpdateFFXISubContentId(polChar.ContentsId, subId, c.Name))
-                            continue;
                     }
 
                     CharaInfo characterInfo = new();
 
                     characters[indx].FFXiId = (uint) (polChar.ContentsId & 0xFFFFFFFFL); // ContentId is 64bit but FFXI truncates it to 32bit.
-                    characters[indx].FFXiIdWorld = (ushort) (subId & 0xFFFF); // This should match, char id + world id. If 0 it's deleted.
-                    characters[indx].WorldId = (ushort) ((subId >> 16) & 0xFFFF);
+                    characters[indx].FFXiIdWorld = (ushort) (polChar.ContentsSubUserId & 0xFFFF); // This should match, char id + world id. If 0 it's deleted.
+                    characters[indx].WorldId = (ushort) ((polChar.ContentsSubUserId >> 16) & 0xFFFF);
                     //character.FfxiIdWorldTbl = charIdExtra; //Doesn't exist in 2010
                     characters[indx].Status = 1;
                     characters[indx].Rename = (ushort) (c.Rename ? 1 : 0);
