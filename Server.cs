@@ -31,7 +31,7 @@ using System.Net.Sockets;
 
 namespace Crystal.FFXILobbyServer
 {
-    public class Server
+    public partial class Server
     {
         public const int BUFFER_SIZE = 0xFFFF;
         public const int BACKLOG = 100;
@@ -51,6 +51,8 @@ namespace Crystal.FFXILobbyServer
             Expansions = expansions;
             WorldList = worldList;
         }
+
+        partial void BypassCheck(Client conn, SelectCharPkt selectPkt, ref bool allowed);
 
         public WorldContainer GetWorldFromSubContentId(uint subContentId)
         {
@@ -184,7 +186,7 @@ namespace Crystal.FFXILobbyServer
                                     ServerExpCode = expCode
                                 };
                                 conn.SendPacket(LobbyKeyPkt.OPCODE, responsePkt.Bytes);
-                                Program.Log.Info($"{conn.GetPolProData()} - Logged into lobby server");
+                                Program.Log.Info($"{conn.PolProData} - Logged into lobby server");
                             }
                             else
                                 conn.SendError(loginError);
@@ -206,7 +208,7 @@ namespace Crystal.FFXILobbyServer
                                     conn.Md5Key++;
 
                                     conn.SendPacket(CharaListPkt.OPCODE, responsePkt.Bytes);
-                                    Program.Log.Info($"{conn.GetPolProData()} - Retrieving characters");
+                                    Program.Log.Info($"{conn.PolProData} - Retrieving characters");
                                 }
                                 else
                                 {
@@ -230,7 +232,7 @@ namespace Crystal.FFXILobbyServer
 
                                 conn.Md5Key++;
                                 conn.SendPacket(WorldListPkt.OPCODE, responsePkt.Bytes);
-                                Program.Log.Info($"{conn.GetPolProData()} - Retrieving world list");
+                                Program.Log.Info($"{conn.PolProData} - Retrieving world list");
                             }
                             else
                                 conn.SendError(0);
@@ -249,7 +251,7 @@ namespace Crystal.FFXILobbyServer
                                     conn.SetRequestedCharaName(requestPkt.Name, world);
                                     conn.Md5Key++;
                                     conn.SendPacket(OkPkt.OPCODE, new OkPkt().Bytes);
-                                    Program.Log.Info($"{conn.GetPolProData()} - PreCreateing a character");
+                                    Program.Log.Info($"{conn.PolProData} - PreCreateing a character");
                                 }
                                 else
                                     conn.SendError(LobbyError.WorldServer);
@@ -270,7 +272,7 @@ namespace Crystal.FFXILobbyServer
                                     conn.Md5Key++;
                                     conn.SendPacket(OkPkt.OPCODE, new OkPkt().Bytes);
                                     conn.ClearCharacters();
-                                    Program.Log.Info($"{conn.GetPolProData()} - Creating a character");
+                                    Program.Log.Info($"{conn.PolProData} - Creating a character");
                                 }
                             }
                             else
@@ -279,11 +281,13 @@ namespace Crystal.FFXILobbyServer
                         else if (packet.Header.opcode == SelectCharPkt.OPCODE)
                         {
                             SelectCharPkt requestPkt = SelectCharPkt.Cast(packet.Data);
-                            if (conn.VerifyPassword(requestPkt.Password))
+                            bool allowed = conn.VerifyPassword(requestPkt.Password);
+                            BypassCheck(conn, requestPkt, ref allowed);
+                            if (allowed)
                             {
                                 conn.GetCharacters(true);
 
-                                WorldServerInfo info = conn.DoSelect(requestPkt.FFXIId, requestPkt.FFXIIdWorld, 0x2601A8C0, 54230, out uint selectError);
+                                WorldServerInfo info = conn.DoSelect(requestPkt.FFXIId, requestPkt.FFXIIdWorld, out uint selectError);
 
                                 if (info != null)
                                 {
@@ -304,7 +308,7 @@ namespace Crystal.FFXILobbyServer
                                     conn.SendPacket(NextLoginPkt.OPCODE, response.Bytes);
                                     conn.Disconnect();
                                     ClientList.Remove(conn);
-                                    Program.Log.Info($"{conn.GetPolProData()} - Selected a character");
+                                    Program.Log.Info($"{conn.PolProData} - Selected a character");
                                 }
                                 else
                                     conn.SendError(selectError);
@@ -322,7 +326,7 @@ namespace Crystal.FFXILobbyServer
                                     conn.Md5Key++;
                                     conn.SendPacket(OkPkt.OPCODE, new OkPkt().Bytes);
                                     conn.ClearCharacters();
-                                    Program.Log.Info($"{conn.GetPolProData()} - Deleting a character");
+                                    Program.Log.Info($"{conn.PolProData} - Deleting a character");
                                 }
                                 else
                                     conn.SendError(LobbyError.WorldServer);
@@ -343,7 +347,7 @@ namespace Crystal.FFXILobbyServer
                                     conn.Md5Key++;
                                     conn.SendPacket(OkPkt.OPCODE, new OkPkt().Bytes);
                                     conn.ClearCharacters();
-                                    Program.Log.Info($"{conn.GetPolProData()} - Renaming a character");
+                                    Program.Log.Info($"{conn.PolProData} - Renaming a character");
                                 }
                             }
                             else
