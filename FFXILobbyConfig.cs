@@ -30,10 +30,7 @@ namespace Crystal.FFXILobbyServer
     public class FFXILobbyConfig
     {
         public readonly string ServerIp;
-
-        public readonly string PolProNotiferId;
-        public readonly string PolProNotiferPassword;
-        public readonly string PolProNotiferIp;
+        public readonly string GameVersion;
 
         public readonly string PolDbHost;
         public readonly string PolDbPort;
@@ -59,7 +56,7 @@ namespace Crystal.FFXILobbyServer
 
         // The expansions the lobby reports as enabled (<expansions enabled="ROTZ,COP,..."/>); null: not set, so the
         // client's own installed set stands
-        public readonly uint? Expansions;
+        public readonly uint Expansions;
 
         public FFXILobbyConfig(string path) 
         {
@@ -72,6 +69,7 @@ namespace Crystal.FFXILobbyServer
             // Load the server configs
             XmlNode cfgNode = doc.DocumentElement.SelectSingleNode("/lobbycfg");
             ServerIp = cfgNode.Attributes["serverIp"]?.InnerText;
+            GameVersion = cfgNode.Attributes["version"]?.InnerText;
 
             // Go through subsettings
             List<WorldContainer> tempWorldList = [];

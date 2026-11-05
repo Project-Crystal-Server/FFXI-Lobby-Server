@@ -40,13 +40,15 @@ namespace Crystal.FFXILobbyServer
 
         public readonly List<WorldContainer> WorldList;
 
-        // The expansions lobby.cfg enables, as the lobby login's bitmask; null: whatever the client has installed
-        public uint? Expansions;
+        public readonly string Version;
+        public readonly uint? Expansions;
 
         private readonly List<Client> ClientList = [];
 
-        public Server(List<WorldContainer> worldList)
+        public Server(string version, uint expansions, List<WorldContainer> worldList)
         {
+            Version = version;
+            Expansions = expansions;
             WorldList = worldList;
         }
 

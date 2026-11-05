@@ -30,7 +30,6 @@ using System.Net.Sockets;
 using System.Security.Cryptography;
 using Crystal.FFXILobbyServer.Network.Models;
 using Crystal.POLProfile.DataObjects.Pol.Character;
-using Org.BouncyCastle.Bcpg;
 
 namespace Crystal.FFXILobbyServer
 {
@@ -118,6 +117,15 @@ namespace Crystal.FFXILobbyServer
         // Request info from PolPro. 0, or the lobby error code to send.
         public uint Login(LobbyLoginPkt loginPkt, out uint key, out ulong serverExpCode)
         {
+            // Check Version
+            if (Server.Version != null && !loginPkt.VersionCode.Equals(Server.Version))
+            {
+                key = 0;
+                serverExpCode = 0;
+                return LobbyError.VersionMismatch;
+            }
+
+            // Try to decrypt auth password and retrieve profile data
             if (!Utils.DecryptAuthPassword(loginPkt.AuthCode, out byte[] authHash, out uint clientIp, out ushort clientPort))
             {
                 key = 0;

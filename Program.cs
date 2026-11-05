@@ -25,7 +25,6 @@ using Microsoft.Extensions.Logging;
 using NLog;
 using System;
 using System.IO;
-using System.Net;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -44,7 +43,7 @@ namespace Crystal.FFXILobbyServer
 
             // Load NLog Config
             using var nlogStream = typeof(Program).Assembly.GetManifestResourceStream("Crystal.FFXILobbyServer.NLog.config");
-            using var nlogReader = System.Xml.XmlReader.Create(nlogStream);
+            using var nlogReader = new StreamReader(nlogStream);
             LogManager.Configuration = new NLog.Config.XmlLoggingConfiguration(nlogReader, null);
 
             Log.Info("=============================");
@@ -87,7 +86,7 @@ namespace Crystal.FFXILobbyServer
             Database.POL_DB_PASSWORD = config.PolDbPassword;
 
             // Setup Server
-            Server server = new Server(config.WorldList) { Expansions = config.Expansions };
+            Server server = new Server(config.GameVersion, config.Expansions, config.WorldList);
 
             // Setup Service
             var builder = Host.CreateApplicationBuilder(args);
