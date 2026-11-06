@@ -30,10 +30,7 @@ namespace Crystal.FFXILobbyServer
     public class FFXILobbyConfig
     {
         public readonly string ServerIp;
-
-        public readonly string PolProNotiferId;
-        public readonly string PolProNotiferPassword;
-        public readonly string PolProNotiferIp;
+        public readonly string GameVersion;
 
         public readonly string PolDbHost;
         public readonly string PolDbPort;
@@ -59,9 +56,9 @@ namespace Crystal.FFXILobbyServer
 
         // The expansions the lobby reports as enabled (<expansions enabled="ROTZ,COP,..."/>); null: not set, so the
         // client's own installed set stands
-        public readonly uint? Expansions;
+        public readonly uint Expansions;
 
-        public FFXILobbyConfig(string path) 
+        public FFXILobbyConfig(string path)
         {
             Console.ForegroundColor = ConsoleColor.Yellow;
             Program.Log.Info($"Loading config: {path}");
@@ -72,6 +69,7 @@ namespace Crystal.FFXILobbyServer
             // Load the server configs
             XmlNode cfgNode = doc.DocumentElement.SelectSingleNode("/lobbycfg");
             ServerIp = cfgNode.Attributes["serverIp"]?.InnerText;
+            GameVersion = cfgNode.Attributes["version"]?.InnerText;
 
             // Go through subsettings
             List<WorldContainer> tempWorldList = [];
@@ -112,13 +110,13 @@ namespace Crystal.FFXILobbyServer
                             if (string.IsNullOrEmpty(apiUrl) || string.IsNullOrEmpty(apiKey))
                                 throw new FormatException($"world {name} needs api (its HTTP API address) and apiKey (its LOBBY_API_KEY)");
 
-                            uint srvIp = BitConverter.ToUInt32(IPAddress.Parse(worldNode.Attributes["ip"]?.InnerText).GetAddressBytes()); 
+                            uint srvIp = BitConverter.ToUInt32(IPAddress.Parse(worldNode.Attributes["ip"]?.InnerText).GetAddressBytes());
                             uint srvPort = uint.Parse(worldNode.Attributes["port"]?.InnerText);
                             uint cacheIp = BitConverter.ToUInt32(IPAddress.Parse(worldNode.Attributes["cacheIp"]?.InnerText).GetAddressBytes());
                             uint cachePort = uint.Parse(worldNode.Attributes["cachePort"]?.InnerText);
 
                             tempWorldList.Add(new(
-                                new World() { Num = num, Name = name},
+                                new World() { Num = num, Name = name },
                                 apiUrl,
                                 apiKey,
                                 srvIp,

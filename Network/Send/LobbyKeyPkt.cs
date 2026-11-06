@@ -19,10 +19,8 @@ along with Project Crystal Server. If not, see <https://www.gnu.org/licenses/>.
 ===========================================================================
 */
 
-using Crystal.FFXILobbyServer.Network.Models;
 using System;
 using System.Runtime.InteropServices;
-using System.Text;
 
 namespace Crystal.FFXILobbyServer.Network.Send
 {
