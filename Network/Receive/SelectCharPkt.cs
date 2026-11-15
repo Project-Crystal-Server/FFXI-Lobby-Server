@@ -38,7 +38,7 @@ namespace Crystal.FFXILobbyServer.Network.Receive
         public readonly byte[] CharacterName_;
         [MarshalAs(UnmanagedType.ByValArray, SizeConst = 0x10)]
         public readonly byte[] Password;
-        public readonly uint Unknown;
+        public readonly uint Index;
         [MarshalAs(UnmanagedType.ByValArray, SizeConst = 0x10)]
         public readonly byte[] AuthChecksum;
 
