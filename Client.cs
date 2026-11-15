@@ -33,7 +33,7 @@ using Crystal.POLProfile.DataObjects.Pol.Character;
 
 namespace Crystal.FFXILobbyServer
 {
-    class Client
+    public class Client
     {
         // Connection stuff
         public Server Server;

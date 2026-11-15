@@ -318,6 +318,8 @@ namespace Crystal.FFXILobbyServer
             if (authPassword == null)
                 return false;
 
+            authPassword = (byte[])authPassword.Clone();
+
             // Verify
             if (authPassword[1] != (authPassword[6] ^ authPassword[12]) ||
                 authPassword[2] != (authPassword[8] ^ authPassword[10]) ||

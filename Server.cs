@@ -65,6 +65,190 @@ namespace Crystal.FFXILobbyServer
             return WorldList.Where(container => container.World.Name == name).FirstOrDefault();
         }
 
+        public void ProcessPacket(Client client, FFXIPacket packet)
+        {
+            //packet.DebugPrintPacket();
+            if (packet.Header.opcode == LobbyLoginPkt.OPCODE)
+            {
+                LobbyLoginPkt loginPkt = LobbyLoginPkt.Cast(packet.Data);
+                uint loginError = client.Login(loginPkt, out uint key, out ulong expCode);
+                if (loginError == 0)
+                {
+                    LobbyKeyPkt responsePkt = new()
+                    {
+                        Key = key,
+                        ServerExpCode = expCode
+                    };
+                    client.SendPacket(LobbyKeyPkt.OPCODE, responsePkt.Bytes);
+                    Program.Log.Info($"{client.PolProData} - Logged into lobby server");
+                }
+                else
+                    client.SendError(loginError);
+            }
+            else if (packet.Header.opcode == GetCharPkt.OPCODE)
+            {
+                GetCharPkt requestPkt = GetCharPkt.Cast(packet.Data);
+                if (client.VerifyPassword(requestPkt.Password))
+                {
+                    Character[] chara = client.GetCharacters(false);
+                    if (chara != null)
+                    {
+                        CharaListPkt responsePkt = new()
+                        {
+                            NumChara = (uint) chara.Length,
+                            Characters = chara,
+                        };
+
+                        client.Md5Key++;
+
+                        client.SendPacket(CharaListPkt.OPCODE, responsePkt.Bytes);
+                        Program.Log.Info($"{client.PolProData} - Retrieving characters");
+                    }
+                    else
+                    {
+                        client.SendError(LobbyError.WorldServer);
+                    }
+                }
+                else
+                    client.SendError(0);
+
+            }
+            else if (packet.Header.opcode == QueryWorldListPkt.OPCODE)
+            {
+                QueryWorldListPkt requestPkt = QueryWorldListPkt.Cast(packet.Data);
+                if (client.VerifyPassword(requestPkt.Password))
+                {
+                    WorldListPkt responsePkt = new()
+                    {
+                        NumWorlds = (uint) WorldList.Count,
+                        WorldList = WorldList.Select(container => container.World).ToArray(),
+                    };
+
+                    client.Md5Key++;
+                    client.SendPacket(WorldListPkt.OPCODE, responsePkt.Bytes);
+                    Program.Log.Info($"{client.PolProData} - Retrieving world list");
+                }
+                else
+                    client.SendError(0);
+            }
+            else if (packet.Header.opcode == CreateCharPrePkt.OPCODE)
+            {
+                CreateCharPrePkt requestPkt = CreateCharPrePkt.Cast(packet.Data);
+                if (client.VerifyPassword(requestPkt.Password))
+                {
+                    WorldContainer world = GetWorldFromName(requestPkt.WorldName);
+                    uint nameError = world == null ? 0 : world.Api.NameError(requestPkt.Name);
+                    if (nameError != 0)
+                        client.SendError(nameError);
+                    else if (world != null)
+                    {
+                        client.SetRequestedCharaName(requestPkt.Name, world);
+                        client.Md5Key++;
+                        client.SendPacket(OkPkt.OPCODE, new OkPkt().Bytes);
+                        Program.Log.Info($"{client.PolProData} - PreCreateing a character");
+                    }
+                    else
+                        client.SendError(LobbyError.WorldServer);
+                }
+                else
+                    client.SendError(0);
+            }
+            else if (packet.Header.opcode == CreateCharPkt.OPCODE)
+            {
+                CreateCharPkt requestPkt = CreateCharPkt.Cast(packet.Data);
+                if (client.VerifyPassword(requestPkt.Password))
+                {
+                    uint error = client.CreateCharacter(requestPkt.FFXIId, requestPkt.Password, requestPkt.NewCharaInfo);
+                    if (error != 0)
+                        client.SendError(error);
+                    else
+                    {
+                        client.Md5Key++;
+                        client.SendPacket(OkPkt.OPCODE, new OkPkt().Bytes);
+                        client.ClearCharacters();
+                        Program.Log.Info($"{client.PolProData} - Creating a character");
+                    }
+                }
+                else
+                    client.SendError(0);
+            }
+            else if (packet.Header.opcode == SelectCharPkt.OPCODE)
+            {
+                SelectCharPkt requestPkt = SelectCharPkt.Cast(packet.Data);
+                bool check = true;
+                BypassCheck(client, requestPkt, ref check);
+                if (check && client.VerifyPassword(requestPkt.Password))
+                {
+                    client.GetCharacters(true);
+
+                    WorldServerInfo info = client.DoSelect(requestPkt.FFXIId, requestPkt.FFXIIdWorld, out uint selectError);
+
+                    if (info != null)
+                    {
+                        NextLoginPkt response = new()
+                        {
+                            FFXIId = requestPkt.FFXIId,
+                            FFXIIdWorld = requestPkt.FFXIIdWorld,
+                            CharacterName = requestPkt.CharacterName,
+                            ServerId = info.Id,
+                            ServerIp = info.ServerIp,
+                            ServerPort = info.ServerPort,
+                            CacheIp = info.CacheIp,
+                            CachePort = info.CachePort
+
+                        };
+
+                        client.Md5Key++;
+                        client.SendPacket(NextLoginPkt.OPCODE, response.Bytes);
+                        client.Disconnect();
+                        ClientList.Remove(client);
+                        Program.Log.Info($"{client.PolProData} - Selected a character");
+                    }
+                    else
+                        client.SendError(selectError);
+                }
+                else
+                    client.SendError(0);
+            }
+            else if (packet.Header.opcode == DeleteCharPkt.OPCODE)
+            {   
+                DeleteCharPkt requestPkt = DeleteCharPkt.Cast(packet.Data);
+                if (client.VerifyPassword(requestPkt.Password))
+                {
+                    if (client.DoDelete(requestPkt.FFXIId, requestPkt.FFXIIdWorld))
+                    {
+                        client.Md5Key++;
+                        client.SendPacket(OkPkt.OPCODE, new OkPkt().Bytes);
+                        client.ClearCharacters();
+                        Program.Log.Info($"{client.PolProData} - Deleting a character");
+                    }
+                    else
+                        client.SendError(LobbyError.WorldServer);
+                }
+                else
+                    client.SendError(0);
+            }
+            else if (packet.Header.opcode == RenameCharPkt.OPCODE)
+            {
+                RenameCharPkt requestPkt = RenameCharPkt.Cast(packet.Data);
+                if (client.VerifyPassword(requestPkt.Password))
+                {
+                    uint error = client.DoRename(requestPkt.FFXIId, requestPkt.FFXIIdWorld, requestPkt.NewName);
+                    if (error != 0)
+                        client.SendError(error);
+                    else
+                    {
+                        client.Md5Key++;
+                        client.SendPacket(OkPkt.OPCODE, new OkPkt().Bytes);
+                        client.ClearCharacters();
+                        Program.Log.Info($"{client.PolProData} - Renaming a character");
+                    }
+                }
+                else
+                    client.SendError(0);
+            }
+        }
+
         #region Socket Handling
         public bool StartServer(int port)
         {
@@ -171,188 +355,7 @@ namespace Crystal.FFXILobbyServer
                         if (packet == null)
                             break;
 
-                        //packet.DebugPrintPacket();
-
-                        // Process Packets
-                        if (packet.Header.opcode == LobbyLoginPkt.OPCODE)
-                        {
-                            LobbyLoginPkt loginPkt = LobbyLoginPkt.Cast(packet.Data);
-                            uint loginError = conn.Login(loginPkt, out uint key, out ulong expCode);
-                            if (loginError == 0)
-                            {
-                                LobbyKeyPkt responsePkt = new()
-                                {
-                                    Key = key,
-                                    ServerExpCode = expCode
-                                };
-                                conn.SendPacket(LobbyKeyPkt.OPCODE, responsePkt.Bytes);
-                                Program.Log.Info($"{conn.PolProData} - Logged into lobby server");
-                            }
-                            else
-                                conn.SendError(loginError);
-                        }
-                        else if (packet.Header.opcode == GetCharPkt.OPCODE)
-                        {
-                            GetCharPkt requestPkt = GetCharPkt.Cast(packet.Data);
-                            if (conn.VerifyPassword(requestPkt.Password))
-                            {
-                                Character[] chara = conn.GetCharacters(false);
-                                if (chara != null)
-                                {
-                                    CharaListPkt responsePkt = new()
-                                    {
-                                        NumChara = (uint) chara.Length,
-                                        Characters = chara,
-                                    };
-
-                                    conn.Md5Key++;
-
-                                    conn.SendPacket(CharaListPkt.OPCODE, responsePkt.Bytes);
-                                    Program.Log.Info($"{conn.PolProData} - Retrieving characters");
-                                }
-                                else
-                                {
-                                    conn.SendError(LobbyError.WorldServer);
-                                }
-                            }
-                            else
-                                conn.SendError(0);
-
-                        }
-                        else if (packet.Header.opcode == QueryWorldListPkt.OPCODE)
-                        {
-                            QueryWorldListPkt requestPkt = QueryWorldListPkt.Cast(packet.Data);
-                            if (conn.VerifyPassword(requestPkt.Password))
-                            {
-                                WorldListPkt responsePkt = new()
-                                {
-                                    NumWorlds = (uint) WorldList.Count,
-                                    WorldList = WorldList.Select(container => container.World).ToArray(),
-                                };
-
-                                conn.Md5Key++;
-                                conn.SendPacket(WorldListPkt.OPCODE, responsePkt.Bytes);
-                                Program.Log.Info($"{conn.PolProData} - Retrieving world list");
-                            }
-                            else
-                                conn.SendError(0);
-                        }
-                        else if (packet.Header.opcode == CreateCharPrePkt.OPCODE)
-                        {
-                            CreateCharPrePkt requestPkt = CreateCharPrePkt.Cast(packet.Data);
-                            if (conn.VerifyPassword(requestPkt.Password))
-                            {
-                                WorldContainer world = GetWorldFromName(requestPkt.WorldName);
-                                uint nameError = world == null ? 0 : world.Api.NameError(requestPkt.Name);
-                                if (nameError != 0)
-                                    conn.SendError(nameError);
-                                else if (world != null)
-                                {
-                                    conn.SetRequestedCharaName(requestPkt.Name, world);
-                                    conn.Md5Key++;
-                                    conn.SendPacket(OkPkt.OPCODE, new OkPkt().Bytes);
-                                    Program.Log.Info($"{conn.PolProData} - PreCreateing a character");
-                                }
-                                else
-                                    conn.SendError(LobbyError.WorldServer);
-                            }
-                            else
-                                conn.SendError(0);
-                        }
-                        else if (packet.Header.opcode == CreateCharPkt.OPCODE)
-                        {
-                            CreateCharPkt requestPkt = CreateCharPkt.Cast(packet.Data);
-                            if (conn.VerifyPassword(requestPkt.Password))
-                            {
-                                uint error = conn.CreateCharacter(requestPkt.FFXIId, requestPkt.Password, requestPkt.NewCharaInfo);
-                                if (error != 0)
-                                    conn.SendError(error);
-                                else
-                                {
-                                    conn.Md5Key++;
-                                    conn.SendPacket(OkPkt.OPCODE, new OkPkt().Bytes);
-                                    conn.ClearCharacters();
-                                    Program.Log.Info($"{conn.PolProData} - Creating a character");
-                                }
-                            }
-                            else
-                                conn.SendError(0);
-                        }
-                        else if (packet.Header.opcode == SelectCharPkt.OPCODE)
-                        {
-                            SelectCharPkt requestPkt = SelectCharPkt.Cast(packet.Data);
-                            bool allowed = conn.VerifyPassword(requestPkt.Password);
-                            BypassCheck(conn, requestPkt, ref allowed);
-                            if (allowed)
-                            {
-                                conn.GetCharacters(true);
-
-                                WorldServerInfo info = conn.DoSelect(requestPkt.FFXIId, requestPkt.FFXIIdWorld, out uint selectError);
-
-                                if (info != null)
-                                {
-                                    NextLoginPkt response = new()
-                                    {
-                                        FFXIId = requestPkt.FFXIId,
-                                        FFXIIdWorld = requestPkt.FFXIIdWorld,
-                                        CharacterName = requestPkt.CharacterName,
-                                        ServerId = info.Id,
-                                        ServerIp = info.ServerIp,
-                                        ServerPort = info.ServerPort,
-                                        CacheIp = info.CacheIp,
-                                        CachePort = info.CachePort
-
-                                    };
-
-                                    conn.Md5Key++;
-                                    conn.SendPacket(NextLoginPkt.OPCODE, response.Bytes);
-                                    conn.Disconnect();
-                                    ClientList.Remove(conn);
-                                    Program.Log.Info($"{conn.PolProData} - Selected a character");
-                                }
-                                else
-                                    conn.SendError(selectError);
-                            }
-                            else
-                                conn.SendError(0);
-                        }
-                        else if (packet.Header.opcode == DeleteCharPkt.OPCODE)
-                        {   
-                            DeleteCharPkt requestPkt = DeleteCharPkt.Cast(packet.Data);
-                            if (conn.VerifyPassword(requestPkt.Password))
-                            {
-                                if (conn.DoDelete(requestPkt.FFXIId, requestPkt.FFXIIdWorld))
-                                {
-                                    conn.Md5Key++;
-                                    conn.SendPacket(OkPkt.OPCODE, new OkPkt().Bytes);
-                                    conn.ClearCharacters();
-                                    Program.Log.Info($"{conn.PolProData} - Deleting a character");
-                                }
-                                else
-                                    conn.SendError(LobbyError.WorldServer);
-                            }
-                            else
-                                conn.SendError(0);
-                        }
-                        else if (packet.Header.opcode == RenameCharPkt.OPCODE)
-                        {
-                            RenameCharPkt requestPkt = RenameCharPkt.Cast(packet.Data);
-                            if (conn.VerifyPassword(requestPkt.Password))
-                            {
-                                uint error = conn.DoRename(requestPkt.FFXIId, requestPkt.FFXIIdWorld, requestPkt.NewName);
-                                if (error != 0)
-                                    conn.SendError(error);
-                                else
-                                {
-                                    conn.Md5Key++;
-                                    conn.SendPacket(OkPkt.OPCODE, new OkPkt().Bytes);
-                                    conn.ClearCharacters();
-                                    Program.Log.Info($"{conn.PolProData} - Renaming a character");
-                                }
-                            }
-                            else
-                                conn.SendError(0);
-                        }
+                        ProcessPacket(conn, packet);
                     }
 
                     if (!conn.IsDisconnected())
