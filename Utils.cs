@@ -20,8 +20,6 @@ along with Project Crystal Server. If not, see <https://www.gnu.org/licenses/>.
 */
 
 using System;
-using System.Collections.Generic;
-using System.IO;
 using System.Text;
 
 namespace Crystal.FFXILobbyServer
@@ -319,6 +317,8 @@ namespace Crystal.FFXILobbyServer
 
             if (authPassword == null)
                 return false;
+
+            authPassword = (byte[])authPassword.Clone();
 
             // Verify
             if (authPassword[1] != (authPassword[6] ^ authPassword[12]) ||

@@ -30,6 +30,7 @@ namespace Crystal.FFXILobbyServer
         public const uint WorldServer     = 305; // "Unable to connect to the world server. Specified operation failed."
         public const uint NameUnavailable = 313; // "The character name you entered is unavailable."
         public const uint NameServer      = 314; // "Failed to register with the name server."
+        public const uint VersionMismatch = 331; // "The game's data has been updated."
         public const uint Banned          = 332; // "Could not connect to lobby server. Please check this title's news for announcements."
     }
 }
