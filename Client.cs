@@ -52,7 +52,7 @@ namespace Crystal.FFXILobbyServer
         public string PolProData => Utils.PolIdToPolProData(PolId);
 
         // Client Info
-        private string ClientVersion = "";
+        public string ClientVersion { get; private set; } = "";
         private uint ClientExpansions = 0;
         public uint Md5Key;
 
